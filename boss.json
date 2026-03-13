@@ -1,0 +1,14 @@
+{
+  "name": "horse-provider-crosssocket",
+  "description": "High-performance, security-hardened CrossSocket provider for the Horse web framework. Replaces the default Indy provider with IOCP/epoll async I/O, an object pool, enforced request limits, and OpenSSL 3.x native TLS.",
+  "version": "1.0.0",
+  "homepage": "https://github.com/freitasjca/horse-provider-crosssocket",
+  "license": "MIT",
+  "mainsrc": "src/",
+  "browsingpath": "src/",
+  "projects": [],
+  "dependencies": {
+    "github.com/freitasjca/horse": ">=3.1.9-crosssocket.1",
+    "github.com/freitasjca/Delphi-Cross-Socket": ">=1.0.0"
+  }
+}

@@ -1,0 +1,48 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{3ED98E40-568B-4EC3-9864-B6F413EE8A55}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="samples\Delphi\console\Console.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="packages\HorseProviderCrossSocket.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="Console">
+        <MSBuild Projects="samples\Delphi\console\Console.dproj"/>
+    </Target>
+    <Target Name="Console:Clean">
+        <MSBuild Projects="samples\Delphi\console\Console.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="Console:Make">
+        <MSBuild Projects="samples\Delphi\console\Console.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseProviderCrossSocket">
+        <MSBuild Projects="packages\HorseProviderCrossSocket.dproj"/>
+    </Target>
+    <Target Name="HorseProviderCrossSocket:Clean">
+        <MSBuild Projects="packages\HorseProviderCrossSocket.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseProviderCrossSocket:Make">
+        <MSBuild Projects="packages\HorseProviderCrossSocket.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="Console;HorseProviderCrossSocket"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="Console:Clean;HorseProviderCrossSocket:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="Console:Make;HorseProviderCrossSocket:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

@@ -1,0 +1,86 @@
+﻿package HorseProviderCrossSocket;
+{$R *.res}
+{$IFDEF IMPLICITBUILDING This IFDEF should not be used by users}
+{$ALIGN 8}
+{$ASSERTIONS ON}
+{$BOOLEVAL OFF}
+{$DEBUGINFO OFF}
+{$EXTENDEDSYNTAX ON}
+{$IMPORTEDDATA ON}
+{$IOCHECKS ON}
+{$LOCALSYMBOLS OFF}
+{$LONGSTRINGS ON}
+{$OPENSTRINGS ON}
+{$OPTIMIZATION OFF}
+{$OVERFLOWCHECKS OFF}
+{$RANGECHECKS OFF}
+{$REFERENCEINFO OFF}
+{$SAFEDIVIDE OFF}
+{$STACKFRAMES ON}
+{$TYPEDADDRESS OFF}
+{$VARSTRINGCHECKS ON}
+{$WRITEABLECONST OFF}
+{$MINENUMSIZE 1}
+{$IMAGEBASE $400000}
+{$DEFINE DEBUG}
+{$ENDIF IMPLICITBUILDING}
+{$LIBSUFFIX AUTO}
+{$RUNONLY}
+{$IMPLICITBUILD OFF}
+
+requires
+  rtl;
+
+contains
+  Horse.Provider.CrossSocket in '..\src\Horse.Provider.CrossSocket.pas',
+  Horse.Provider.CrossSocket.Server in '..\src\Horse.Provider.CrossSocket.Server.pas',
+  Horse.Provider.CrossSocket.Pool in '..\src\Horse.Provider.CrossSocket.Pool.pas',
+  Horse.Provider.CrossSocket.Request in '..\src\Horse.Provider.CrossSocket.Request.pas',
+  Horse.Provider.CrossSocket.Response in '..\src\Horse.Provider.CrossSocket.Response.pas',
+  Horse.Provider.CrossSocket.WorkerPool in '..\src\Horse.Provider.CrossSocket.WorkerPool.pas',
+  Utils.SyncObjs in '..\..\Delphi-Cross-Socket\Utils\Utils.SyncObjs.pas',
+  Utils.Utils in '..\..\Delphi-Cross-Socket\Utils\Utils.Utils.pas',
+  Net.CrossHttpParams in '..\..\Delphi-Cross-Socket\Net\Net.CrossHttpParams.pas',
+  Net.CrossHttpServer in '..\..\Delphi-Cross-Socket\Net\Net.CrossHttpServer.pas',
+  Net.SocketAPI in '..\..\Delphi-Cross-Socket\Net\Net.SocketAPI.pas',
+  Net.CrossSocket.Base in '..\..\Delphi-Cross-Socket\Net\Net.CrossSocket.Base.pas',
+  Net.CrossSocket in '..\..\Delphi-Cross-Socket\Net\Net.CrossSocket.pas',
+  Net.CrossServer in '..\..\Delphi-Cross-Socket\Net\Net.CrossServer.pas',
+  Net.CrossHttpUtils in '..\..\Delphi-Cross-Socket\Net\Net.CrossHttpUtils.pas',
+  Net.CrossHttpParser in '..\..\Delphi-Cross-Socket\Net\Net.CrossHttpParser.pas',
+  Net.Winsock2 in '..\..\Delphi-Cross-Socket\Net\Net.Winsock2.pas',
+  Net.Wship6 in '..\..\Delphi-Cross-Socket\Net\Net.Wship6.pas',
+  Utils.Rtti in '..\..\Delphi-Cross-Socket\Utils\Utils.Rtti.pas',
+  Utils.StrUtils in '..\..\Delphi-Cross-Socket\Utils\Utils.StrUtils.pas',
+  Utils.Logger in '..\..\Delphi-Cross-Socket\Utils\Utils.Logger.pas',
+  Utils.IOUtils in '..\..\Delphi-Cross-Socket\Utils\Utils.IOUtils.pas',
+  Utils.AnonymousThread in '..\..\Delphi-Cross-Socket\Utils\Utils.AnonymousThread.pas',
+  Utils.DateTime in '..\..\Delphi-Cross-Socket\Utils\Utils.DateTime.pas',
+  Net.CrossSocket.Iocp in '..\..\Delphi-Cross-Socket\Net\Net.CrossSocket.Iocp.pas',
+  Net.CrossSslSocket.OpenSSL in '..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.OpenSSL.pas',
+  Net.OpenSSL in '..\..\Delphi-Cross-Socket\Net\Net.OpenSSL.pas',
+  Net.CrossSslSocket in '..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.pas',
+  Net.CrossSslSocket.Types in '..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.Types.pas',
+  Net.CrossSslSocket.Base in '..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.Base.pas',
+  Utils.ArrayUtils in '..\..\Delphi-Cross-Socket\Utils\Utils.ArrayUtils.pas',
+  Utils.RegEx in '..\..\Delphi-Cross-Socket\Utils\Utils.RegEx.pas',
+  Utils.Hash in '..\..\Delphi-Cross-Socket\Utils\Utils.Hash.pas',
+  DTF.Hash in '..\..\Delphi-Cross-Socket\DelphiToFPC\DTF.Hash.pas',
+  Net.CrossHttpRouter in '..\..\Delphi-Cross-Socket\Net\Net.CrossHttpRouter.pas',
+  Net.CrossHttpRouterDirUtils in '..\..\Delphi-Cross-Socket\Net\Net.CrossHttpRouterDirUtils.pas',
+  CnSM3 in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSM3.pas',
+  CnSHA3 in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSHA3.pas',
+  CnKDF in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnKDF.pas',
+  CnRandom in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnRandom.pas',
+  CnDES in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnDES.pas',
+  CnBase64 in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnBase64.pas',
+  CnAES in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnAES.pas',
+  CnPemUtils in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnPemUtils.pas',
+  CnFloat in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnFloat.pas',
+  CnNative in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnNative.pas',
+  CnConsts in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnConsts.pas',
+  CnSHA2 in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSHA2.pas',
+  CnSHA1 in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSHA1.pas',
+  CnMD5 in '..\..\Delphi-Cross-Socket\CnPack\Crypto\CnMD5.pas';
+
+end.
