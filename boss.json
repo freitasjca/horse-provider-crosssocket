@@ -1,7 +1,7 @@
 {
   "name": "horse-provider-crosssocket",
   "description": "High-performance, security-hardened CrossSocket provider for the Horse web framework. Replaces the default Indy provider with IOCP/epoll async I/O, an object pool, enforced request limits, and OpenSSL 3.x native TLS.",
-  "version": "1.0.0-beta",
+  "version": "1.0.0-beta.1",
   "homepage": "https://github.com/freitasjca/horse-provider-crosssocket",
   "license": "MIT",
   "mainsrc": "src/",
