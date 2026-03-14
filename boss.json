@@ -8,7 +8,7 @@
   "browsingpath": "src/",
   "projects": [],
   "dependencies": {
-    "github.com/freitasjca/horse": ">=3.1.9-crosssocket.1",
+    "github.com/freitasjca/horse": ">=3.1.9-crosssocket.3",
     "github.com/freitasjca/Delphi-Cross-Socket": ">=1.0.0"
   }
 }
