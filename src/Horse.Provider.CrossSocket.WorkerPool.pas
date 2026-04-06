@@ -1,4 +1,4 @@
-unit Horse.Provider.CrossSocket.WorkerPool;
+﻿unit Horse.Provider.CrossSocket.WorkerPool;
 
 {
   Horse CrossSocket Provider  -  Worker Thread Pool  (hardened)

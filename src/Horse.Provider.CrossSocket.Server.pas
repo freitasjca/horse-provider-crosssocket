@@ -22,12 +22,18 @@
     procedure SetPrivateKey(const APKeyStr: string)    overload
     property Ssl: Boolean  (read-only)
 
-    ── mTLS additions (Net.CrossSslSocket.Base patch) ───────────────────────
-    procedure SetCACertificate(const ACACertBuf: Pointer; ACACertBufSize: Int) abstract
-    procedure SetCACertificate(const ACACertBytes: TBytes)  overload
-    procedure SetCACertificate(const ACACertStr: string)    overload
+    ── mTLS (Net.CrossSslSocket.Base patch + Net.CrossSslSocket.OpenSSL impl) ─
     procedure SetCACertificateFile(const ACACertFile: string)
-    procedure SetVerifyPeer(const AVerify: Boolean)         abstract
+      → loads CA cert, calls SSL_CTX_add_client_CA + X509_STORE_add_cert
+    //procedure SetCACertificate(const ACACertBuf: Pointer; ACACertBufSize: Int) abstract
+    //procedure SetCACertificate(const ACACertBytes: TBytes)  overload
+    //procedure SetCACertificate(const ACACertStr: string)    overload
+    //procedure SetCACertificateFile(const ACACertFile: string)
+
+    //loads CA cert, calls SSL_CTX_add_client_CA + X509_STORE_add_cert
+       SSL_CTX_set_verify(PEER|FAIL_IF_NO_PEER_CERT) / VERIFY_NONE
+    procedure SetVerifyPeer(const AVerify: Boolean)
+      SSL_CTX_set_verify(PEER|FAIL_IF_NO_PEER_CERT) / VERIFY_NONE
     Concrete implementations in TCrossOpenSslSocket call:
       SetCACertificate → SSL_CTX_add_client_CA + X509_STORE_add_cert
       SetVerifyPeer    → SSL_CTX_set_verify(SSL_VERIFY_PEER
@@ -45,13 +51,28 @@
     property MaxHeaderSize:   Int64
     property MaxPostDataSize: Int64
     property Compressible:    Boolean
+    property MinCompressSize: Int64
 
-  ── Properties that DO NOT EXIST anywhere in the confirmed source ────────────
-  KeepAlive, KeepAliveTimeout, Timeout, MaxConnections, ServerName,
-  CertFile, KeyFile, KeyPassword, CipherList.
-  These were assumed in the original design but have no real counterparts.
-  SSLCACertFile and SSLVerifyPeer ARE now supported via the patched
-  SetCACertificateFile / SetVerifyPeer methods on TCrossSslSocketBase.
+  ── Config fields applied in ApplyConfig ────────────────────────────────────
+  Applied:
+    IoThreads        → TCrossHttpServer constructor argument
+    MaxHeaderSize    → FServer.MaxHeaderSize     [SEC-1]
+    MaxBodySize      → FServer.MaxPostDataSize   [SEC-1]
+    Compressible     → FServer.Compressible      [Config]
+    MinCompressSize  → FServer.MinCompressSize   [Config]
+    SSLEnabled       → TCrossHttpServer constructor argument
+    SSLCertFile      → FServer.SetCertificateFile
+    SSLKeyFile       → FServer.SetPrivateKeyFile
+    SSLCACertFile    → FServer.SetCACertificateFile  (mTLS)
+    SSLVerifyPeer    → FServer.SetVerifyPeer          (mTLS)
+
+  Reserved (CrossSocket API not available):
+    KeepAliveTimeout — no matching property confirmed in TCrossHttpServer
+    ReadTimeout      — no matching property confirmed in TCrossHttpServer
+    MaxConnections   — no matching property confirmed in TCrossHttpServer
+    SSLKeyPassword   — no key-password API confirmed in TCrossSslSocketBase
+    SSLCipherList    — no SetCipherList method on TCrossSslSocketBase;
+                       cipher list is set internally in TCrossOpenSslSocket._InitSslCtx
 
   ── Security notes ───────────────────────────────────────────────────────────
   [SEC-1] MaxHeaderSize + MaxPostDataSize enforced to safe defaults.
@@ -177,6 +198,14 @@ begin
   else
     FServer.MaxPostDataSize := DEFAULT_MAX_BODY_SIZE;
 
+  // ── [Config] Compression ─────────────────────────────────────────────────
+  // TCrossHttpServer.Compressible: when True, CrossSocket gzip-compresses
+  // responses whose Content-Type is listed as compressible AND whose body
+  // exceeds MinCompressSize bytes.  False by default — enable only when the
+  // server sits behind a TLS terminator or when clients declare Accept-Encoding.
+  FServer.Compressible    := FConfig.Compressible;
+  FServer.MinCompressSize := FConfig.MinCompressSize;
+
   // ── [SEC-3] SSL server certificate + private key ──────────────────────────
   // Confirmed API on TCrossSslSocketBase (Net.CrossSslSocket.Base.pas):
   //   procedure SetCertificateFile(const ACertFile: string)
@@ -194,7 +223,12 @@ begin
       FServer.SetPrivateKeyFile(FConfig.SSLKeyFile);
 
     // ── [MTLS-1] CA certificate for client-certificate verification ───────
+    // SetCACertificateFile is implemented in TCrossOpenSslSocket (see
+    // Net.CrossSslSocket.OpenSSL.pas — mTLS patch).  Must be called BEFORE
+    // SetVerifyPeer so the X509_STORE is populated before verify mode is set.
     // SetCACertificateFile is the new method added to TCrossSslSocketBase
+
+
     // (Net.CrossSslSocket.Base patch).  The concrete implementation in
     // TCrossOpenSslSocket calls:
     //   SSL_CTX_add_client_CA(FContext, LCACert)   — advertises CA in TLS hello

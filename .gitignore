@@ -65,3 +65,26 @@ backup/
 **/vcl/
 dunitx-results.xml
 *.bak
+
+# Boss
+modules/
+boss.lock
+
+# Claude Code
+.claude/settings.local.json
+.claude.json
+CLAUDE.md
+BULD.md
+
+# Delphi build output
+__history/
+__recovery/
+*.dcu
+*.exe
+*.dll
+*.bpl
+*.dcp
+*.local
+*.identcache
+*.tvsconfig
+*.dsk

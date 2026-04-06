@@ -82,6 +82,27 @@
                Ctx.Response.Send('string')          — valid (returns THorseResponse,
                                                        result discarded as statement)
              No separate fix required.
+
+
+  ── Improvement log ─────────────────────────────────────────────────────────
+  [BUG-2]  EHorseCallbackInterrupted not caught.
+           Horse raises EHorseCallbackInterrupted as the normal signal for
+           pipeline completion (when a middleware calls Next with no further
+           handlers).  All other Horse providers swallow this silently.
+           The previous version let it fall into the generic Exception handler,
+           which logged every request as a worker-pool error and sent a 500
+           response over the real response.  Fixed by adding an explicit
+           on E: EHorseCallbackInterrupted do clause before the generic catch.
+
+  [IMP-3]  HandleRequest was a pointless indirection.
+           The private HandleRequest method did nothing but call ExecutePipeline.
+           It has been removed; the RequestCallback anonymous procedure calls
+           ExecutePipeline directly, eliminating an unnecessary call frame.
+
+  [Config] ServerBanner forwarded to TResponseBridge.Flush.
+           The provider passes FServer.Config.ServerBanner to Flush and to
+           SendError so the Server: response header reflects the configured
+           value (or 'unknown' when empty) on both normal and error responses.
 }
 
 interface
@@ -106,11 +127,14 @@ type
   THorseProviderCrossSocket = class(THorseProviderAbstract)
   private
     class var FServer: THorseCrossSocketServer;
+    // CrossSocket owns its own FPort — completely independent of any FPort that
+    // may exist in THorseProviderAbstract or in the Console provider.  Class vars
+    // on sibling/parent classes are separate storage locations; sharing one would
+    // cause silent port-not-changing bugs when both providers are compiled.
+    class var FPort: Integer;
 
-    class procedure HandleRequest(
-      const ACrossReq: ICrossHttpRequest;
-      const ACrossRes: ICrossHttpResponse
-    );
+    class function  GetPort: Integer; static;
+    class procedure SetPort(const AValue: Integer); static;
 
     class procedure ExecutePipeline(
       const ACrossReq: ICrossHttpRequest;
@@ -128,11 +152,6 @@ type
     // ── Overrides matching THorseProviderAbstract ──────────────────────────
 
     // [FIX-CS-2] ListenWithConfig — override.
-    // THorseProviderAbstract (PATCH-ABS-2) declares ListenWithConfig with
-    // exactly this signature as 'virtual'.  Now that the base has a matching
-    // virtual slot, 'override' is correct and 'reintroduce' would cause E2037
-    // because the compiler finds the matching ancestor declaration and rejects
-    // a re-introduction of an identical signature.
     class procedure ListenWithConfig(const APort: Integer;
       const AConfig: THorseCrossSocketConfig); override;
 
@@ -140,17 +159,20 @@ type
     class procedure StopListen; override;
 
     // [FIX-CS-1] No-param Listen — required by base 'virtual; abstract'.
-    // Reads the port from the inherited class var (THorseCore.FPort / THorse.Port).
     class procedure Listen; overload; override;
 
     // ── Non-virtual convenience overloads ─────────────────────────────────
 
     // Convenience: sets THorse.Port then calls Listen.
-    // NOT an override — just an overload without a base counterpart.
     class procedure Listen(APort: Integer); overload;
 
     // Direct stop — called by StopListen; also available to external code.
     class procedure Stop;
+
+    // Port — CrossSocket's own storage; set by ListenWithConfig; read by no-arg Listen.
+    // Shadows the Port property that THorseProviderAbstract previously declared
+    // (Abstract no longer declares it — see patches/horse/src/Horse.Provider.Abstract.pas).
+    class property Port: Integer read GetPort write SetPort;
 
     class property Server: THorseCrossSocketServer read FServer;
   end;
@@ -160,16 +182,37 @@ implementation
 uses
   Horse,
   // [FIX-CS-6] THTTPStatus lives in Horse.Commons
-  Horse.Commons;
+  Horse.Commons,
+  // DEFAULT_PORT = 9000 — matches the Console provider fallback
+  Horse.Constants,
+  // [BUG-2] EHorseCallbackInterrupted — the normal pipeline-end signal
+  Horse.Exception.Interrupted;
 
 { THorseProviderCrossSocket }
 
+// ── Port accessors ────────────────────────────────────────────────────────────
+class function THorseProviderCrossSocket.GetPort: Integer;
+begin
+  Result := FPort;
+end;
+
+class procedure THorseProviderCrossSocket.SetPort(const AValue: Integer);
+begin
+  FPort := AValue;
+end;
+
 // ── No-param Listen — base override ──────────────────────────────────────────
 class procedure THorseProviderCrossSocket.Listen;
+var
+  LPort: Integer;
 begin
-  // THorse.Port is the class var added by PATCH-ABS-3 to THorseProviderAbstract.
-  // Callers set it via THorse.Port := N before calling Listen.
-  ListenWithConfig(THorse.Port, THorseCrossSocketConfig.Default);
+  // Read CrossSocket's own FPort (set by a prior ListenWithConfig or Listen(APort)
+  // call).  Fall back to DEFAULT_PORT (9000) when FPort has never been assigned,
+  // mirroring the Console provider's behaviour.
+  LPort := FPort;
+  if LPort <= 0 then
+    LPort := DEFAULT_PORT;
+  ListenWithConfig(LPort, THorseCrossSocketConfig.Default);
 end;
 
 // ── Convenience overload: Listen(APort) ──────────────────────────────────────
@@ -192,17 +235,19 @@ begin
 
   FServer := THorseCrossSocketServer.Create(AConfig);
 
-  // [FIX-CS-1a] Assign via the RequestCallback procedure-reference property.
-  // FServer.Server.OnRequest is TCrossHttpRequestEvent — a method-of-object
-  // event that cannot accept an anonymous procedure directly.
-  // THorseCrossSocketServer.InternalOnRequest is the method-of-object bridge
-  // (wired to FServer.Server.OnRequest in the constructor); it forwards every
-  // call to FRequestCallback, which we set here.
+  // [IMP-3] Assign directly to ExecutePipeline — HandleRequest was a
+  // pointless wrapper that did nothing but forward the call.
   FServer.RequestCallback :=
     procedure(const Req: ICrossHttpRequest; const Res: ICrossHttpResponse)
     begin
-      HandleRequest(Req, Res);
+      ExecutePipeline(Req, Res);
     end;
+
+  // Keep our own FPort in sync so the no-arg Listen correctly re-uses the
+  // port on a restart.  We write directly to FPort (CrossSocket's own class
+  // var) — not to THorseProviderAbstract's Port, which no longer exists after
+  // the Abstract patch removed it.
+  FPort := APort;
 
   FServer.Start(APort);
   DoOnListen;
@@ -226,15 +271,6 @@ begin
   THorseWorkerPool.Finalize;
 end;
 
-// ── HandleRequest ─────────────────────────────────────────────────────────────
-class procedure THorseProviderCrossSocket.HandleRequest(
-  const ACrossReq: ICrossHttpRequest;
-  const ACrossRes: ICrossHttpResponse
-);
-begin
-  ExecutePipeline(ACrossReq, ACrossRes);
-end;
-
 // ── ExecutePipeline ───────────────────────────────────────────────────────────
 class procedure THorseProviderCrossSocket.ExecutePipeline(
   const ACrossReq: ICrossHttpRequest;
@@ -248,6 +284,7 @@ var
   ErrorHandler: TWorkerErrorProc;
   // [FIX-CS-4b] local to avoid passing a function-call rvalue to Assigned(var)
   WorkerPool:   THorseWorkerPool;
+  Banner:       string;
 begin
   // [SEC-30] Track this request for graceful-drain accounting
   if Assigned(FServer) then
@@ -271,6 +308,12 @@ begin
       Exit;
     end;
 
+    // Capture banner once — used for both normal and error responses
+    if Assigned(FServer) then
+      Banner := FServer.Config.ServerBanner
+    else
+      Banner := '';
+
     // ── Pool acquire + full population ──────────────────────────────────────
     Ctx := THorseContextPool.Acquire;
     try
@@ -280,11 +323,14 @@ begin
       // ── Horse pipeline ────────────────────────────────────────────────────
       try
         // [FIX-CS-3 / PATCH-ABS-3] THorse.Execute(Req, Res) runs the pipeline.
-        // Execute is declared on THorseProviderAbstract (PATCH-ABS-3) and calls
-        // THorseCore.Routes.Resolve(Req, Res, nil).  THorse inherits it via the
-        // THorseProvider → THorseProviderAbstract chain.
         THorse.Execute(Ctx.Request, Ctx.Response);
       except
+        // [BUG-2] EHorseCallbackInterrupted is Horse's normal pipeline-end
+        // signal — raised by NextCaller when the middleware chain is exhausted.
+        // Swallow silently; the response has already been populated.
+        on EHorseCallbackInterrupted do
+          ; // normal completion — do nothing
+
         on E: EHorseException do
         begin
           Ctx.Response.Status(E.Status);
@@ -295,12 +341,10 @@ begin
         on E: Exception do
         begin
           // [SEC-31] Log internally — NEVER leak stack or detail to client
-          // [FIX-CS-4b] Assigned() takes a var param; a function-call result
-          // is a temporary rvalue, not a variable => E2036. Use a local.
           WorkerPool := THorseWorkerPool.Instance;
           if Assigned(WorkerPool) then
           begin
-            // [FIX-CS-4] copy the proc-reference property to a local before invoking
+            // [FIX-CS-4] copy proc-reference property to a local before invoking
             ErrorHandler := WorkerPool.OnTaskError;
             if Assigned(ErrorHandler) then
               ErrorHandler(E, 0);
@@ -311,7 +355,8 @@ begin
         end;
       end;
 
-      TResponseBridge.Flush(Ctx.Response, ACrossRes);
+      // [Config] Pass ServerBanner so the Server: header reflects the config
+      TResponseBridge.Flush(Ctx.Response, ACrossRes, Banner);
 
     finally
       THorseContextPool.Release(Ctx);
@@ -331,15 +376,21 @@ class procedure THorseProviderCrossSocket.SendError(
   const AMessage:  string
 );
 var
-  Buf: TBytes;
+  Buf:    TBytes;
+  Banner: string;
 begin
   ACrossRes.StatusCode  := AStatus;
   ACrossRes.ContentType := 'application/json; charset=utf-8';
 
-  // Minimal security headers even on error responses
+  // [Config] Apply ServerBanner from server config on error responses too
+  if Assigned(FServer) and (FServer.Config.ServerBanner <> '') then
+    Banner := FServer.Config.ServerBanner
+  else
+    Banner := 'unknown';
+
   ACrossRes.Header['X-Content-Type-Options'] := 'nosniff';
   ACrossRes.Header['X-Frame-Options']        := 'DENY';
-  ACrossRes.Header['Server']                 := 'unknown';
+  ACrossRes.Header['Server']                 := Banner;
   ACrossRes.Header['Cache-Control']          := 'no-store';
 
   Buf := TEncoding.UTF8.GetBytes(

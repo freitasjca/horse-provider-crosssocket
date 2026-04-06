@@ -37,18 +37,35 @@
 
   [SEC-18] Query string key/value size limits: 2 KB each.
 
+  ── Improvements ────────────────────────────────────────────────────────────
+  [IMP-1a] Use ACrossReq.Path (already decoded by CrossSocket) instead of
+           manually splitting RawPathAndParams.  The raw URL is still checked
+           for length ([SEC-14]) before Path is used.
+
+  [IMP-1b] Use ACrossReq.Query (THttpUrlParams, already parsed by CrossSocket)
+           instead of calling ParseQueryString on the raw string.  Size limits
+           ([SEC-18]) are still enforced on the already-decoded values.
+
+  [IMP-1c] Use ACrossReq.Cookies (TRequestCookies, already parsed by
+           CrossSocket) instead of PopulateCookiesFromHeader.  Iterating the
+           library's parsed collection is more robust than manual semicolon
+           splitting and avoids double-parsing.
+
   ── API reference (all verified against uploaded source files) ───────────────
   ICrossHttpRequest (Net.CrossHttpServer.pas):
     property Method:           string        ('GET', 'POST', ...)
+    property Path:             string        (decoded path, no query string)
     property RawPathAndParams: string        (raw un-decoded path + '?' + query)
     property HostName:         string
     property ContentType:      string
     property Header:           THttpHeader   (see below)
+    property Query:            THttpUrlParams (already-parsed query — TBaseParams)
+    property Cookies:          TRequestCookies (already-parsed cookies — TBaseParams)
     property Body:             TObject       (TMemoryStream when btBinary)
     property BodyType:         TBodyType     (btNone/btUrlEncoded/btMultiPart/btBinary)
     property Connection:       ICrossHttpConnection -> .PeerAddr: string
 
-  THttpHeader = class(TBaseParams) (Net.CrossHttpParams.pas — NOW CONFIRMED):
+  THttpHeader = class(TBaseParams) (Net.CrossHttpParams.pas — confirmed):
     Inherits all TBaseParams members:
       property Count: Integer                        (total header entries)
       property Items[AIndex: Integer]: TNameValue    (integer-indexed access)
@@ -57,10 +74,14 @@
       procedure Clear
     TNameValue = record Name, Value: string end
 
+  THttpUrlParams = class(TBaseParams) — same enumerator as THttpHeader.
+  TRequestCookies = class(TBaseParams) — same enumerator as THttpHeader.
+
   THorseRequest (patched Horse.Request.pas, PATCH-REQ-3):
     procedure Populate(AMethod, AMethodType, APath, AContentType, ARemoteAddr)
     function  Headers: THorseCoreParam -> .Dictionary.AddOrSetValue(K, V)
     function  Query:   THorseCoreParam -> .Dictionary.AddOrSetValue(K, V)
+    function  Cookie:  THorseCoreParam -> .Dictionary.AddOrSetValue(K, V)
     function  Body(const ABody: TObject): THorseRequest   (setter overload)
 
   THorseCoreParam (Horse.Core.Param.pas):
@@ -130,8 +151,13 @@ type
                       const ACrossReq: ICrossHttpRequest;
                             AHorseReq: THorseRequest;
                       out   AReason:   string): Boolean;
-    class procedure ParseQueryString(
-                      const ARawQuery: string;
+    // [IMP-1b] Populate query params from CrossSocket's already-parsed Query
+    class procedure PopulateQuery(
+                      const ACrossReq: ICrossHttpRequest;
+                            AHorseReq: THorseRequest);
+    // [IMP-1c] Populate cookie collection from CrossSocket's already-parsed Cookies
+    class procedure PopulateCookies(
+                      const ACrossReq: ICrossHttpRequest;
                             AHorseReq: THorseRequest);
     class procedure MapBody(
                       const ACrossReq: ICrossHttpRequest;
@@ -160,9 +186,9 @@ class function TRequestBridge.Populate(
   out   ARejectReason: string
 ): TRequestValidationResult;
 var
-  RawUrl, Path, Query: string;
-  QPos:                Integer;
-  PeerAddr:            string;
+  RawUrl:  string;
+  Path:    string;
+  PeerAddr: string;
 begin
   ARejectReason := '';
 
@@ -173,8 +199,8 @@ begin
     Exit(rvMethodNotAllowed);
   end;
 
-  // ── [SEC-14] URL length guard ─────────────────────────────────────────────
-  // RawPathAndParams: confirmed property on ICrossHttpRequest
+  // ── [SEC-14] URL length guard — check raw URL before any parsing ──────────
+  // RawPathAndParams: confirmed property on ICrossHttpRequest.
   // (property RawPathAndParams: string read GetRawPathAndParams).
   // Contains the raw un-decoded path + optional '?' + query string.
   RawUrl := ACrossReq.RawPathAndParams;
@@ -197,18 +223,10 @@ begin
   if not CheckSmuggling(ACrossReq, ARejectReason) then
     Exit(rvBadRequest);
 
-  // ── Split path and query string ───────────────────────────────────────────
-  QPos := Pos('?', RawUrl);
-  if QPos > 0 then
-  begin
-    Path  := Copy(RawUrl, 1, QPos - 1);
-    Query := Copy(RawUrl, QPos + 1, MaxInt);
-  end
-  else
-  begin
-    Path  := RawUrl;
-    Query := '';
-  end;
+  // ── [IMP-1a] Use CrossSocket's already-decoded Path ───────────────────────
+  // ACrossReq.Path is the decoded path segment without the query string.
+  // The raw URL was already validated for length above.
+  Path := ACrossReq.Path;
   if (Path = '') or (Path[1] <> '/') then
     Path := '/' + Path;
 
@@ -231,15 +249,15 @@ begin
   if not ParseHeaders(ACrossReq, AHorseReq, ARejectReason) then
     Exit(rvBadRequest);
 
-  // ── [PATCH-REQ-4] Cookie parsing from Cookie header ───────────────────────
-  // Req.Cookie on the CrossSocket path is populated here from the Cookie
-  // request header.  InitializeCookie nil-guards FWebRequest so it returns an
-  // empty collection; PopulateCookiesFromHeader fills it from the raw header.
-  AHorseReq.PopulateCookiesFromHeader(ACrossReq.Header['Cookie']);
+  // ── [IMP-1c] Cookie population from CrossSocket's parsed Cookies ──────────
+  // Uses ACrossReq.Cookies (TRequestCookies) instead of raw Cookie header
+  // string, avoiding double-parsing and manual semicolon splitting.
+  PopulateCookies(ACrossReq, AHorseReq);
 
-  // ── [SEC-18] Query string with key/value size limits ─────────────────────
-  if Query <> '' then
-    ParseQueryString(Query, AHorseReq);
+  // ── [IMP-1b] Query population from CrossSocket's parsed Query ─────────────
+  // Uses ACrossReq.Query (THttpUrlParams) instead of raw query string,
+  // avoiding manual URL decoding.  Size limits [SEC-18] still applied.
+  PopulateQuery(ACrossReq, AHorseReq);
 
   // ── Body: non-owning reference [SEC-9] ───────────────────────────────────
   MapBody(ACrossReq, AHorseReq);
@@ -371,42 +389,39 @@ begin
   end;
 end;
 
-// ── [SEC-18] ──────────────────────────────────────────────────────────────────
-class procedure TRequestBridge.ParseQueryString(
-  const ARawQuery: string;
-        AHorseReq: THorseRequest
-);
+// ── [IMP-1b] Query population from CrossSocket's parsed THttpUrlParams ────────
+// Replaces manual ParseQueryString / TNetEncoding.URL.Decode calls.
+// CrossSocket has already URL-decoded the keys and values; we only apply
+// the [SEC-18] size limits on the already-decoded strings.
+class procedure TRequestBridge.PopulateQuery(
+  const ACrossReq: ICrossHttpRequest;
+        AHorseReq: THorseRequest);
 var
-  Parts:    TArray<string>;
-  Part:     string;
-  EqPos:    Integer;
-  Key, Val: string;
+  NV: TNameValue;
 begin
-  Parts := ARawQuery.Split(['&']);
-  for Part in Parts do
+  for NV in ACrossReq.Query do
   begin
-    if Part = '' then Continue;
-
-    EqPos := Pos('=', Part);
-    if EqPos > 0 then
-    begin
-      Key := TNetEncoding.URL.Decode(Copy(Part, 1, EqPos - 1));
-      Val := TNetEncoding.URL.Decode(Copy(Part, EqPos + 1, MaxInt));
-    end
-    else
-    begin
-      Key := TNetEncoding.URL.Decode(Part);
-      Val := '';
-    end;
-
-    if Key = '' then Continue;
+    if NV.Name = '' then Continue;
     // [SEC-18] Drop oversized keys/values silently
-    if (Length(Key) > MAX_QUERY_KEY_LEN) or
-       (Length(Val) > MAX_QUERY_VALUE_LEN) then Continue;
+    if (Length(NV.Name)  > MAX_QUERY_KEY_LEN) or
+       (Length(NV.Value) > MAX_QUERY_VALUE_LEN) then Continue;
+    AHorseReq.Query.Dictionary.AddOrSetValue(NV.Name, NV.Value);
+  end;
+end;
 
-    // THorseCoreParam.Query is lazy-initialised on first call.
-    // Dictionary.AddOrSetValue is the correct insertion method.
-    AHorseReq.Query.Dictionary.AddOrSetValue(Key, Val);
+// ── [IMP-1c] Cookie population from CrossSocket's parsed TRequestCookies ──────
+// Replaces PopulateCookiesFromHeader / manual semicolon split.
+// CrossSocket has already parsed the Cookie header; we just iterate.
+class procedure TRequestBridge.PopulateCookies(
+  const ACrossReq: ICrossHttpRequest;
+        AHorseReq: THorseRequest);
+var
+  NV: TNameValue;
+begin
+  for NV in ACrossReq.Cookies do
+  begin
+    if NV.Name = '' then Continue;
+    AHorseReq.Cookie.Dictionary.AddOrSetValue(NV.Name, NV.Value);
   end;
 end;
 
@@ -478,7 +493,7 @@ begin
             // ordinary form field
             AHorseReq.ContentFields.Dictionary.AddOrSetValue(Field.Name, Field.AsString)
           else
-            // file upload – store the stream (non‑owning reference)
+            // file upload – store the stream (non-owning reference)
             AHorseReq.ContentFields.AddStream(Field.Name, Field.Value);
         end;
       end;

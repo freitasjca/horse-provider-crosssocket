@@ -37,16 +37,31 @@ unit Horse.Provider.CrossSocket.Response;
   [SEC-23] Security headers added by default.
            X-Frame-Options, Referrer-Policy, Cache-Control.
 
-  [SEC-5]  Server: header suppressed.
+  [SEC-5]  Server: header set to config.ServerBanner or 'unknown' (suppressed).
 
   [SEC-24] ContentStream lifetime guard.
            Stream position reset before send. Bridge never frees the stream.
+
+  ── Improvements ────────────────────────────────────────────────────────────
+  [IMP-4]  Sent guard.
+           ACrossRes.Sent is checked at the start of Flush. If CrossSocket has
+           already sent the response (e.g. via a direct ICrossHttpResponse call
+           in middleware), the bridge skips writing to avoid a double-send.
+
+  [IMP-6]  Content-Length header.
+           Explicit Content-Length is set for string and stream bodies so that
+           HEAD requests and HTTP proxies see a reliable byte count.
+
+  [Config] ServerBanner passed as parameter.
+           Flush now receives AServerBanner from the provider config.
+           Empty string → 'unknown' (previous hard-coded behaviour preserved).
 
   ── API reference (verified against uploaded source files) ──────────────────
   ICrossHttpResponse (Net.CrossHttpServer.pas):
     property StatusCode:   Integer read/write
     property ContentType:  string  read/write
     property Header:       THttpHeader  (default string indexer [name] := value)
+    property Sent:         Boolean read  (True once Send has been called)
     procedure Send(const ABody: TStream; ...)   overload — stream body
     procedure Send(const ABody: TBytes; ...)    overload — bytes body
     procedure Send(const ABody: string; ...)    overload — string body
@@ -57,9 +72,9 @@ unit Horse.Provider.CrossSocket.Response;
 
   THorseResponse (patched Horse.Response.pas, PATCH-RES-4):
     function  Status: Integer                   (nil-guarded getter)
-    property  BodyText:      string             (FCSBody shadow field)
-    property  ContentStream: TStream            (FCSContentStream shadow field)
-    property  CSContentType: string             (FCSContentType shadow field)
+    property  BodyText:       string             (FCSBody shadow field)
+    property  ContentStream:  TStream            (FCSContentStream shadow field)
+    property  CSContentType:  string             (FCSContentType shadow field)
     property  CustomHeaders: TDictionary<string,string>  (PATCH-RES-3)
 }
 
@@ -76,9 +91,12 @@ uses
 type
   TResponseBridge = class
   public
+    /// Flush AHorseRes to ACrossRes.
+    /// AServerBanner: value for the Server: header; '' → 'unknown'.
     class procedure Flush(
             AHorseRes:       THorseResponse;
-      const ACrossRes:       ICrossHttpResponse
+      const ACrossRes:       ICrossHttpResponse;
+      const AServerBanner:   string
     );
 
   private
@@ -87,7 +105,9 @@ type
     class procedure CopyHeaders(
                             AHorseRes:       THorseResponse;
                       const ACrossRes:       ICrossHttpResponse);
-    class procedure ApplySecurityHeaders(const ACrossRes: ICrossHttpResponse);
+    class procedure ApplySecurityHeaders(
+                      const ACrossRes:       ICrossHttpResponse;
+                      const AServerBanner:   string);
     class procedure WriteBody(
                             AHorseRes:       THorseResponse;
                       const ACrossRes:       ICrossHttpResponse);
@@ -106,16 +126,22 @@ const
 
 class procedure TResponseBridge.Flush(
         AHorseRes:       THorseResponse;
-  const ACrossRes:       ICrossHttpResponse
+  const ACrossRes:       ICrossHttpResponse;
+  const AServerBanner:   string
 );
 var
   CT: string;
 begin
+  // [IMP-4] Do not attempt to write a response that CrossSocket has already
+  // sent (e.g. by middleware that called ICrossHttpResponse.Send directly).
+  // Writing again would produce a double-send or corrupt framing.
+  if ACrossRes.Sent then Exit;
+
   // Status — THorseResponse.Status (no args) is nil-guarded via PATCH-RES-4
   ACrossRes.StatusCode := AHorseRes.Status;
 
   // [SEC-23][SEC-22] Apply safe defaults BEFORE app headers so app can override
-  ApplySecurityHeaders(ACrossRes);
+  ApplySecurityHeaders(ACrossRes, AServerBanner);
 
   // Copy app-set headers (CRLF-stripped, hop-by-hop filtered) [SEC-19][SEC-20]
   CopyHeaders(AHorseRes, ACrossRes);
@@ -179,19 +205,25 @@ begin
   end;
 end;
 
-// ── [SEC-22][SEC-23] ─────────────────────────────────────────────────────────
+// ── [SEC-22][SEC-23][SEC-5][Config] ──────────────────────────────────────────
 class procedure TResponseBridge.ApplySecurityHeaders(
-  const ACrossRes: ICrossHttpResponse
+  const ACrossRes:     ICrossHttpResponse;
+  const AServerBanner: string
 );
 begin
-  ACrossRes.Header['X-Content-Type-Options'] := 'nosniff';         // [SEC-22]
-  ACrossRes.Header['X-Frame-Options']        := 'DENY';             // [SEC-23]
+  ACrossRes.Header['X-Content-Type-Options'] := 'nosniff';           // [SEC-22]
+  ACrossRes.Header['X-Frame-Options']        := 'DENY';               // [SEC-23]
   ACrossRes.Header['Referrer-Policy']        := 'strict-origin-when-cross-origin';
   ACrossRes.Header['Cache-Control']          := 'no-store';
-  ACrossRes.Header['Server']                 := 'unknown';          // [SEC-5]
+  // [SEC-5][Config] Use caller-supplied banner; fall back to 'unknown' so the
+  // real server name/version is never disclosed even when banner is empty.
+  if AServerBanner <> '' then
+    ACrossRes.Header['Server'] := AServerBanner
+  else
+    ACrossRes.Header['Server'] := 'unknown';
 end;
 
-// ── [SEC-24] ─────────────────────────────────────────────────────────────────
+// ── [SEC-24][IMP-6] ──────────────────────────────────────────────────────────
 class procedure TResponseBridge.WriteBody(
         AHorseRes:       THorseResponse;
   const ACrossRes:       ICrossHttpResponse
@@ -206,6 +238,8 @@ begin
   begin
     // [SEC-24] Reset position — guard against double-send of exhausted stream
     Stream.Position := 0;
+    // [IMP-6] Set Content-Length so proxies and HEAD requests see the size
+    ACrossRes.Header['Content-Length'] := IntToStr(Stream.Size);
     // ICrossHttpResponse.Send(TStream) — confirmed overload
     ACrossRes.Send(Stream);
     Exit;
@@ -214,12 +248,17 @@ begin
   // BodyText: PATCH-RES-4 shadow field (empty string when not set)
   if AHorseRes.BodyText <> '' then
   begin
+    // [IMP-6] Compute UTF-8 byte length (may differ from string char count)
+    ACrossRes.Header['Content-Length'] :=
+      IntToStr(TEncoding.UTF8.GetByteCount(AHorseRes.BodyText));
     // Send(string) confirmed overload — CrossSocket handles UTF-8 encoding
     ACrossRes.Send(AHorseRes.BodyText);
     Exit;
   end;
 
   // Empty body — headers-only response (e.g. 204 No Content)
+  // [IMP-6] Explicit zero Content-Length for clarity
+  ACrossRes.Header['Content-Length'] := '0';
   // Send(TBytes) with an empty array confirmed overload
   Buf := nil;
   ACrossRes.Send(Buf);
