@@ -291,7 +291,7 @@ var
   end;
 
 begin
-(*
+
   // ── 01  Health check ─────────────────────────────────────────────────────────
   Section('01  GET /ping');
   DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
@@ -303,7 +303,7 @@ begin
   DoSync(AClient, 'GET', BASE_URL + '/methods/get', nil, nil, R);
   Check('status 200',              R.StatusCode = 200, IntToStr(R.StatusCode));
   Check('body contains "GET"',     Pos('"GET"', R.Body) > 0, R.Body);
-*)
+
   // ── 03  POST with body ───────────────────────────────────────────────────────
   Section('03  POST /methods/post  (JSON body echo)');
   LHeaders := THttpHeader.Create;
@@ -318,7 +318,7 @@ begin
   Check('body contains "POST"',        Pos('"POST"',  R.Body) > 0, R.Body);
   Check('body echoes request payload', Pos('hello',   R.Body) > 0, R.Body);
 
-(*
+
   // ── 04  PUT with path param ──────────────────────────────────────────────────
   Section('04  PUT /methods/put/42');
   DoSync(AClient, 'PUT', BASE_URL + '/methods/put/42', nil, nil, R);
@@ -440,7 +440,7 @@ begin
   end;
   Check('status 200',                  R.StatusCode = 200,              IntToStr(R.StatusCode));
   Check('X-Test-Header value echoed',  Pos('HelloFromClient', R.Body) > 0, R.Body);
-*)
+
 end;
 
 // ── Entry point ───────────────────────────────────────────────────────────────

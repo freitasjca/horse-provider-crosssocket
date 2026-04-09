@@ -543,6 +543,68 @@ Without this override, calling `THorse.ListenWithConfig(8080, Config)` on the Co
 
 ---
 
+## Bug fixes in the provider
+
+### `Horse.Provider.CrossSocket.Pool.pas` — FIX-POOL-1: double-free of `TCrossHttpRequest.FBody` on POST requests
+
+**Symptom:** Every POST request crashed with `EInvalidPointer` inside `TCrossHttpConnection._DoOnRequestEnd(True)`, traced to `FreeAndNil(FBody)` in `TCrossHttpRequest.Destroy`. GET requests were unaffected.
+
+**Root cause — the `Body(AObject)` setter ownership contract:**
+
+`THorseRequest` exposes two `Body` overloads:
+
+```pascal
+// Getter — returns FBody as TStream
+function  Body: TStream;
+
+// Setter — Indy ownership contract: ALWAYS frees existing FBody before assigning
+function  Body(const ABody: TObject): THorseRequest;
+```
+
+The setter was designed for the Indy path where Horse parses and **owns** body objects (form fields, JSON trees, etc.). Its implementation always frees the existing `FBody`:
+
+```pascal
+function THorseRequest.Body(const ABody: TObject): THorseRequest;
+begin
+  Result := Self;
+  if Assigned(FBody) then
+    FBody.Free;   // ← ALWAYS frees — correct for Indy, fatal for CrossSocket
+  FBody := ABody;
+end;
+```
+
+On the CrossSocket path, `FBody` is a **non-owning** reference into `TCrossHttpRequest.FBody` — a `TMemoryStream` that CrossSocket allocates and owns. When `TRequestBridge.MapBody` processes a POST request with a binary body, it calls `AHorseReq.Body(Stream)` to hand the stream pointer to Horse. `FBody` now points to CrossSocket's memory.
+
+The original `THorseContext.Reset` and `THorseContext.Destroy` called `FRequest.Body(nil)` with a comment claiming the setter "sets `FBody := nil` WITHOUT freeing the old value." This comment was **factually wrong**. The setter freed `FBody` before assigning nil — exactly once per request for every POST. Then `TCrossHttpRequest.Destroy` called `FreeAndNil(FBody)` a second time on the already-freed block → `EInvalidPointer`.
+
+**Why GET was unaffected:** GET has no body. `MapBody` exits early when `BodyObj = nil`. The setter `Body(Stream)` is never called, so `FBody` stays nil throughout the request. `Body(nil)` in `Reset` hits `Assigned(nil) = False` — no free, no crash.
+
+**Fix:** Replace every `FRequest.Body(nil)` call in `THorseContext` and `THorseContextPool` with `FRequest.Clear`. `THorseRequest.Clear` (PATCH-REQ-2) sets `FBody := nil` via direct assignment — it never calls `Free`:
+
+```pascal
+procedure THorseRequest.Clear;
+begin
+  FWebRequest := nil;
+  FBody       := nil;   // direct assignment — NEVER calls Free
+  FSession    := nil;
+  // ... clears all other fields ...
+end;
+```
+
+Three call sites were corrected in `patches/horse-provider-crosssocket/src/Horse.Provider.CrossSocket.Pool.pas`:
+
+| Location | Before (buggy) | After (fixed) |
+|---|---|---|
+| `THorseContext.Destroy` | `FRequest.Body(nil)` then `FRequest.Free` | `FRequest.Clear` then `FRequest.Free` |
+| `THorseContext.Reset` | `FRequest.Body(nil)` then `FRequest.Clear` | `FRequest.Clear` only |
+| `THorseContextPool.Destroy` (per-context loop) | `Ctx.FRequest.Body(nil)` then `Ctx.Free` | `Ctx.Free` only (Destroy calls Clear internally) |
+
+After `FRequest.Clear`, `FBody = nil`. When `THorseRequest.Destroy` runs its own `if Assigned(FBody) then FBody.Free`, it sees nil and skips the free. When CrossSocket later calls `FreeAndNil(FBody)` in `TCrossHttpRequest.Destroy`, `FBody` is still valid — it was never freed by the Horse side — so the free succeeds cleanly.
+
+**The invariant:** Horse's pool code must never free `FBody`. `THorseRequest.Clear` is the only safe way to clear it on the CrossSocket path.
+
+---
+
 ## Architectural incompatibility with host-managed providers
 
 `HORSE_CROSSSOCKET` **cannot coexist with `HORSE_ISAPI`, `HORSE_APACHE`, `HORSE_CGI`, or `HORSE_FCGI`**. This is an architectural incompatibility, not a define-ordering issue.
@@ -701,6 +763,14 @@ The ideal long-term outcome is for the original Delphi-Cross-Socket repository t
 | `Horse.Provider.FPC.LCL.pas` | Modified | `ListenWithConfig` override | — |
 
 **Net change to Horse source:** approximately 350 lines added across 13 files; 2 lines changed (the `RawWebRequest` → `RawPathInfo`/`MethodType` substitution in `Horse.Core.RouterTree.pas`).
+
+---
+
+## Summary of all files changed in the provider (horse-provider-crosssocket)
+
+| File | Fix ID | What was changed | Why |
+|---|---|---|---|
+| `Horse.Provider.CrossSocket.Pool.pas` | FIX-POOL-1 | Replaced `FRequest.Body(nil)` with `FRequest.Clear` in `THorseContext.Destroy`, `THorseContext.Reset`, and the `THorseContextPool.Destroy` loop | `Body(AObject)` setter always frees `FBody`; on CrossSocket path `FBody` is a non-owning reference — double-free caused `EInvalidPointer` on every POST request |
 
 ---
 
