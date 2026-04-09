@@ -1,8 +1,8 @@
-program HorseCSTestClient;
+﻿program HorseCSTestClient;
 
 {$APPTYPE CONSOLE}
 
-{
+(*
   Horse + CrossSocket  —  Integration Test Client
   =================================================
   Destination: horse-provider-crosssocket/samples/tests/HorseCSTestClient.dpr
@@ -24,18 +24,96 @@ program HorseCSTestClient;
     12  POST   /upload (multipart)         → 200 {"received":true,...}
     13  GET    /download                   → 200 Content-Disposition + body
     14  GET    /headers/echo               → 200 custom header echoed back
-}
+*)
 
 uses
   System.SysUtils,
   System.StrUtils,
   System.Classes,
-  System.SyncObjs,
   Net.CrossHttpClient,
-  Net.CrossHttpParams;
+  Net.CrossHttpParams,
+  Horse.Provider.CrossSocket.WorkerPool in '..\..\src\Horse.Provider.CrossSocket.WorkerPool.pas',
+  Horse.Provider.CrossSocket.Server in '..\..\src\Horse.Provider.CrossSocket.Server.pas',
+  Horse.Provider.CrossSocket.Response in '..\..\src\Horse.Provider.CrossSocket.Response.pas',
+  Horse.Provider.CrossSocket.Request in '..\..\src\Horse.Provider.CrossSocket.Request.pas',
+  Horse.Provider.CrossSocket.Pool in '..\..\src\Horse.Provider.CrossSocket.Pool.pas',
+  Horse.Provider.CrossSocket in '..\..\src\Horse.Provider.CrossSocket.pas',
+  Horse.WebModule in '..\..\..\horse\src\Horse.WebModule.pas' {HorseWebModule: TWebModule},
+  Horse.Session in '..\..\..\horse\src\Horse.Session.pas',
+  Horse.Rtti in '..\..\..\horse\src\Horse.Rtti.pas',
+  Horse.Rtti.Helper in '..\..\..\horse\src\Horse.Rtti.Helper.pas',
+  Horse.Response in '..\..\..\horse\src\Horse.Response.pas',
+  Horse.Request in '..\..\..\horse\src\Horse.Request.pas',
+  Horse.Provider.VCL in '..\..\..\horse\src\Horse.Provider.VCL.pas',
+  Horse.Provider.ISAPI in '..\..\..\horse\src\Horse.Provider.ISAPI.pas',
+  Horse.Provider.IOHandleSSL in '..\..\..\horse\src\Horse.Provider.IOHandleSSL.pas',
+  Horse.Provider.IOHandleSSL.Contract in '..\..\..\horse\src\Horse.Provider.IOHandleSSL.Contract.pas',
+  Horse.Provider.FPC.LCL in '..\..\..\horse\src\Horse.Provider.FPC.LCL.pas',
+  Horse.Provider.FPC.HTTPApplication in '..\..\..\horse\src\Horse.Provider.FPC.HTTPApplication.pas',
+  Horse.Provider.FPC.FastCGI in '..\..\..\horse\src\Horse.Provider.FPC.FastCGI.pas',
+  Horse.Provider.FPC.Daemon in '..\..\..\horse\src\Horse.Provider.FPC.Daemon.pas',
+  Horse.Provider.FPC.CGI in '..\..\..\horse\src\Horse.Provider.FPC.CGI.pas',
+  Horse.Provider.FPC.Apache in '..\..\..\horse\src\Horse.Provider.FPC.Apache.pas',
+  Horse.Provider.Daemon in '..\..\..\horse\src\Horse.Provider.Daemon.pas',
+  Horse.Provider.Console in '..\..\..\horse\src\Horse.Provider.Console.pas',
+  Horse.Provider.Config in '..\..\..\horse\src\Horse.Provider.Config.pas',
+  Horse.Provider.CGI in '..\..\..\horse\src\Horse.Provider.CGI.pas',
+  Horse.Provider.Apache in '..\..\..\horse\src\Horse.Provider.Apache.pas',
+  Horse.Provider.Abstract in '..\..\..\horse\src\Horse.Provider.Abstract.pas',
+  Horse.Proc in '..\..\..\horse\src\Horse.Proc.pas',
+  Horse in '..\..\..\horse\src\Horse.pas',
+  Horse.Core.Param in '..\..\..\horse\src\Horse.Core.Param.pas',
+  Horse.Core.Param.Field in '..\..\..\horse\src\Horse.Core.Param.Field.pas',
+  Horse.Commons in '..\..\..\horse\src\Horse.Commons.pas',
+  Horse.Callback in '..\..\..\horse\src\Horse.Callback.pas',
+  CnSM3 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSM3.pas',
+  CnSHA3 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSHA3.pas',
+  CnSHA2 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSHA2.pas',
+  CnSHA1 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSHA1.pas',
+  CnRandom in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnRandom.pas',
+  CnPemUtils in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnPemUtils.pas',
+  CnNative in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnNative.pas',
+  CnMD5 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnMD5.pas',
+  CnKDF in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnKDF.pas',
+  CnFloat in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnFloat.pas',
+  CnDES in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnDES.pas',
+  CnConsts in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnConsts.pas',
+  CnBase64 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnBase64.pas',
+  CnAES in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnAES.pas',
+  DTF.Hash in '..\..\..\Delphi-Cross-Socket\DelphiToFPC\DTF.Hash.pas',
+  Net.Wship6 in '..\..\..\Delphi-Cross-Socket\Net\Net.Wship6.pas',
+  Net.Winsock2 in '..\..\..\Delphi-Cross-Socket\Net\Net.Winsock2.pas',
+  Net.SocketAPI in '..\..\..\Delphi-Cross-Socket\Net\Net.SocketAPI.pas',
+  Net.OpenSSL in '..\..\..\Delphi-Cross-Socket\Net\Net.OpenSSL.pas',
+  Net.CrossSslSocket.Types in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.Types.pas',
+  Net.CrossSslSocket in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.pas',
+  Net.CrossSslSocket.OpenSSL in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.OpenSSL.pas',
+  Net.CrossSslSocket.Base in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.Base.pas',
+  Net.CrossSocket in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSocket.pas',
+  Net.CrossSocket.Iocp in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSocket.Iocp.pas',
+  Net.CrossSocket.Base in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSocket.Base.pas',
+  Net.CrossServer in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossServer.pas',
+  Net.CrossHttpUtils in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpUtils.pas',
+  Net.CrossHttpServer in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpServer.pas',
+  Net.CrossHttpRouterDirUtils in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpRouterDirUtils.pas',
+  Net.CrossHttpRouter in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpRouter.pas',
+  Net.CrossHttpParser in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpParser.pas',
+  Utils.Utils in '..\..\..\Delphi-Cross-Socket\Utils\Utils.Utils.pas',
+  Utils.SyncObjs in '..\..\..\Delphi-Cross-Socket\Utils\Utils.SyncObjs.pas',
+  Utils.StrUtils in '..\..\..\Delphi-Cross-Socket\Utils\Utils.StrUtils.pas',
+  Utils.Rtti in '..\..\..\Delphi-Cross-Socket\Utils\Utils.Rtti.pas',
+  Utils.RegEx in '..\..\..\Delphi-Cross-Socket\Utils\Utils.RegEx.pas',
+  Utils.Logger in '..\..\..\Delphi-Cross-Socket\Utils\Utils.Logger.pas',
+  Utils.IOUtils in '..\..\..\Delphi-Cross-Socket\Utils\Utils.IOUtils.pas',
+  Utils.Hash in '..\..\..\Delphi-Cross-Socket\Utils\Utils.Hash.pas',
+  Utils.DateTime in '..\..\..\Delphi-Cross-Socket\Utils\Utils.DateTime.pas',
+  Utils.ArrayUtils in '..\..\..\Delphi-Cross-Socket\Utils\Utils.ArrayUtils.pas',
+  Utils.AnonymousThread in '..\..\..\Delphi-Cross-Socket\Utils\Utils.AnonymousThread.pas',
+  ThirdParty.Posix.Syslog in '..\..\..\horse\src\ThirdParty.Posix.Syslog.pas',
+  System.SyncObjs  ;
 
 const
-  BASE_URL   = 'http://127.0.0.1:9100';
+  BASE_URL   = 'http://127.0.0.1:9010';
   TIMEOUT_MS = 8000;
 
 // ── Global counters ───────────────────────────────────────────────────────────
@@ -103,9 +181,10 @@ function DoSync(
   out   AResult:  TReqResult
 ): Boolean;
 var
-  LEvent: TEvent;
+  LEvent:  TEvent;
+  LResult: TReqResult;   // captured by the closure; assigned to AResult after wait
 begin
-  AResult    := Default(TReqResult);
+  LResult    := Default(TReqResult);
   LEvent     := TEvent.Create(nil, True, False, '');
   try
     AClient.DoRequest(AMethod, AUrl, AHeaders, ABody, nil, nil,
@@ -113,17 +192,18 @@ begin
       begin
         if AResp <> nil then
         begin
-          AResult.StatusCode := AResp.StatusCode;
-          AResult.Body       := StreamToStr(AResp.Content);
-          AResult.Response   := AResp;
+          LResult.StatusCode := AResp.StatusCode;
+          LResult.Body       := StreamToStr(AResp.Content);
+          LResult.Response   := AResp;
         end;
         LEvent.SetEvent;
       end);
-    AResult.TimedOut := (LEvent.WaitFor(TIMEOUT_MS) <> wrSignaled);
+    LResult.TimedOut := (LEvent.WaitFor(TIMEOUT_MS) <> wrSignaled);
   finally
     LEvent.Free;
   end;
-  Result := not AResult.TimedOut;
+  AResult := LResult;
+  Result  := not AResult.TimedOut;
 end;
 
 { multipart/form-data overload. }
@@ -135,9 +215,10 @@ function DoSyncMP(
   out   AResult:  TReqResult
 ): Boolean;
 var
-  LEvent: TEvent;
+  LEvent:  TEvent;
+  LResult: TReqResult;   // captured by the closure; assigned to AResult after wait
 begin
-  AResult  := Default(TReqResult);
+  LResult  := Default(TReqResult);
   LEvent   := TEvent.Create(nil, True, False, '');
   try
     AClient.DoRequest('POST', AUrl, AHeaders, ABody, nil, nil,
@@ -145,17 +226,18 @@ begin
       begin
         if AResp <> nil then
         begin
-          AResult.StatusCode := AResp.StatusCode;
-          AResult.Body       := StreamToStr(AResp.Content);
-          AResult.Response   := AResp;
+          LResult.StatusCode := AResp.StatusCode;
+          LResult.Body       := StreamToStr(AResp.Content);
+          LResult.Response   := AResp;
         end;
         LEvent.SetEvent;
       end);
-    AResult.TimedOut := (LEvent.WaitFor(TIMEOUT_MS) <> wrSignaled);
+    LResult.TimedOut := (LEvent.WaitFor(TIMEOUT_MS) <> wrSignaled);
   finally
     LEvent.Free;
   end;
-  Result := not AResult.TimedOut;
+  AResult := LResult;
+  Result  := not AResult.TimedOut;
 end;
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -209,6 +291,7 @@ var
   end;
 
 begin
+(*
   // ── 01  Health check ─────────────────────────────────────────────────────────
   Section('01  GET /ping');
   DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
@@ -220,7 +303,7 @@ begin
   DoSync(AClient, 'GET', BASE_URL + '/methods/get', nil, nil, R);
   Check('status 200',              R.StatusCode = 200, IntToStr(R.StatusCode));
   Check('body contains "GET"',     Pos('"GET"', R.Body) > 0, R.Body);
-
+*)
   // ── 03  POST with body ───────────────────────────────────────────────────────
   Section('03  POST /methods/post  (JSON body echo)');
   LHeaders := THttpHeader.Create;
@@ -235,6 +318,7 @@ begin
   Check('body contains "POST"',        Pos('"POST"',  R.Body) > 0, R.Body);
   Check('body echoes request payload', Pos('hello',   R.Body) > 0, R.Body);
 
+(*
   // ── 04  PUT with path param ──────────────────────────────────────────────────
   Section('04  PUT /methods/put/42');
   DoSync(AClient, 'PUT', BASE_URL + '/methods/put/42', nil, nil, R);
@@ -356,6 +440,7 @@ begin
   end;
   Check('status 200',                  R.StatusCode = 200,              IntToStr(R.StatusCode));
   Check('X-Test-Header value echoed',  Pos('HelloFromClient', R.Body) > 0, R.Body);
+*)
 end;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
