@@ -34,6 +34,7 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 
 - [Requirements](#requirements)
 - [Required Changes to Horse Source](#required-changes-to-horse-source)
+- [Applying the Patches](#applying-the-patches)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [HTTPS / TLS](#https--tls)
@@ -56,11 +57,13 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 |---|---|---|
 | Delphi | 10.4 Sydney+ | Requires `System.Threading`, inline `var` |
 | Horse *(fork)* | 3.x + patches | See [Required Changes to Horse Source](#required-changes-to-horse-source) |
-| [Delphi-Cross-Socket](https://github.com/winddriver/Delphi-Cross-Socket) | latest | Transport layer |
+| [Delphi-Cross-Socket](https://github.com/winddriver/Delphi-Cross-Socket) *(patched)* | latest | Transport layer — two files need patches |
 | OpenSSL | 1.1.x or 3.x | Only required for HTTPS |
 | [Boss](https://github.com/HashLoad/boss) | any | Optional — for automatic dependency install |
 
-> **Horse fork required.** This provider needs three additive changes to Horse that do not exist upstream yet (see the section below). Until a PR is merged into `HashLoad/horse`, the `boss.json` of this repo declares a dependency on `github.com/your-org/horse` — the maintained fork — instead of `github.com/HashLoad/horse`. Boss resolves the fork transparently; nothing in your application code changes.
+> **Horse fork required.** This provider needs four additive changes to Horse that do not exist upstream yet (see the section below). Until a PR is merged into `HashLoad/horse`, the `boss.json` of this repo declares a dependency on `github.com/your-org/horse` — the maintained fork — instead of `github.com/HashLoad/horse`. Boss resolves the fork transparently; nothing in your application code changes.
+
+> **Delphi-Cross-Socket patches required.** Two files in Delphi-Cross-Socket also need patches: `Net.CrossSslSocket.OpenSSL.pas` (adds mTLS `SetCACertificateFile` / `SetVerifyPeer` API) and `Net.CrossSocket.Iocp.pas` (fixes a DEBUG-build shutdown cascade). All patch files are in the [`patches/`](#applying-the-patches) directory of this repository.
 
 ---
 
@@ -78,7 +81,7 @@ Since the upstream PR may take time to be reviewed and merged, the recommended a
 https://github.com/HashLoad/horse  →  Fork  →  github.com/your-org/horse
 ```
 
-**Step 2 — Apply the three patches** (described in full below) on a branch named `crosssocket-patches` and merge it into `main` of your fork.
+**Step 2 — Apply the four patches** (described in full below) on a branch named `crosssocket-patches` and merge it into `main` of your fork.
 
 **Step 3 — Tag a semver release on your fork**
 
@@ -127,17 +130,17 @@ Commit and tag a new provider release. Consumers run `boss update` and the fork 
 
 ---
 
-### What the three patches add
+### What the four patches add
 
 Every change is strictly additive — no existing method is removed, renamed, or given a different signature. All existing Horse projects continue to compile and run without modification.
 
-> **Compatibility guarantee:** adding overloads and new methods to Horse does not break any existing compiled binary or source file. The `{$DEFINE HORSE_NOPROVIDER}` define that activates this provider is the only change a consuming project ever needs to make.
+> **Compatibility guarantee:** adding overloads and new methods to Horse does not break any existing compiled binary or source file. The `{$DEFINE HORSE_CROSSSOCKET}` define that activates this provider is the only project-level change a consuming project ever needs to make.
 
 ---
 
 ### Change 1 — `Horse.Request.pas`
 
-**Why:** The object pool (`Pool.pas`) calls `THorseRequest.Create` with no arguments at startup to pre-warm contexts. The current constructor requires a `TWebRequest` parameter, which does not exist outside the WebBroker/Indy pipeline. The pool also calls `FRequest.Clear` and writes directly to `FRequest.Body`, `FRequest.Session`, `FRequest.Method`, `FRequest.PathInfo`, `FRequest.RawPathInfo`, `FRequest.RemoteAddr`, and `FRequest.ContentType` during the mandatory pool reset cycle.
+**Why:** The object pool (`Pool.pas`) calls `THorseRequest.Create` with no arguments at startup to pre-warm contexts. The current constructor requires a `TWebRequest` parameter, which does not exist outside the WebBroker/Indy pipeline. The pool also calls `FRequest.Clear` during the pool reset cycle. Additionally, on the CrossSocket path `FWebRequest` is always `nil` — `Body`, `Host`, and `InitializeQuery` must be guarded against that.
 
 **Add to the `interface` section — `public` block:**
 
@@ -149,7 +152,8 @@ constructor Create; overload;
 
 { Fast field wipe for pool reuse — no Free/Create on the hot path.
   Called by THorseContext.Reset between every request.
-  IMPORTANT: must NOT free Body — it is a non-owning stream reference. }
+  CRITICAL: must NOT free Body — it is a non-owning stream reference
+  into CrossSocket's socket buffer (see FIX-POOL-1 in Pool.pas). }
 procedure Clear;
 ```
 
@@ -178,7 +182,7 @@ begin
   FContentType := '';
   { DO NOT Free FBody — it is a non-owning reference into CrossSocket's
     socket buffer. Setting it to nil is correct; freeing it would corrupt
-    the live connection. }
+    the live connection and produce EInvalidPointer (see FIX-POOL-1). }
   FBody    := nil;
   FSession := nil;
   FParams.Clear;
@@ -271,7 +275,45 @@ end;
 
 ---
 
-### Change 3 — `Horse.Provider.Abstract.pas`
+### Change 3 — `Horse.Core.RouterTree.pas`
+
+**Why:** The router's `Execute` method reads `ARequest.RawWebRequest.RawPathInfo` and `ARequest.RawWebRequest.MethodType` directly. On the CrossSocket path `RawWebRequest` is always `nil` (no `TWebRequest` is ever created), so every request crashes with an access violation before reaching any route.
+
+The fix adds a nil-guard that branches on whether `RawWebRequest` is assigned:
+- **Indy path** (`RawWebRequest <> nil`): original expressions unchanged — zero behaviour change.
+- **CrossSocket path** (`RawWebRequest = nil`): reads `ARequest.RawPathInfo` and `ARequest.MethodType` — shadow fields populated by `TRequestBridge.Populate` before the pipeline is entered.
+
+**Modify `THorseRouterTree.Execute` in the `implementation` section:**
+
+```delphi
+function THorseRouterTree.Execute(...): Boolean;
+var
+  LPathInfo:       string;
+  LMethodType:     TMethodType;
+  LRawWebRequest:  TWebRequest;   // local var required — Assigned() needs a variable
+begin
+  LRawWebRequest := ARequest.RawWebRequest;
+  if not Assigned(LRawWebRequest) then
+  begin
+    // CrossSocket path: shadow fields set by TRequestBridge.Populate
+    LPathInfo   := ARequest.RawPathInfo;
+    LMethodType := ARequest.MethodType;
+  end
+  else
+  begin
+    // Indy path: original expressions — unchanged
+    LPathInfo   := LRawWebRequest.RawPathInfo;
+    LMethodType := LRawWebRequest.MethodType;
+  end;
+  // ... rest of Execute unchanged ...
+end;
+```
+
+This change is two new lines inside `Execute` (the nil-guard branch) and two substitutions in the existing Indy branch — the Indy behaviour is bit-for-bit identical to upstream.
+
+---
+
+### Change 4 — `Horse.Provider.Abstract.pas` + new `Horse.Provider.Config.pas`
 
 **Why:** `THorseProviderCrossSocket` exposes `ListenWithConfig(APort, AConfig)` as a class method. The abstract base class `THorseProvider` must declare a virtual version of this method so the compiler knows the signature. The default implementation simply calls `Listen(APort)`, so all existing providers (Console, VCL, Daemon, CGI, Apache) compile and run without any modification.
 
@@ -294,6 +336,8 @@ type
     MaxHeaderSize:    Integer;
     MaxBodySize:      Int64;
     MaxConnections:   Integer;
+    Compressible:     Boolean;
+    MinCompressSize:  Int64;
     SSLEnabled:       Boolean;
     SSLCertFile:      string;
     SSLKeyFile:       string;
@@ -316,6 +360,8 @@ begin
   Result.MaxHeaderSize    := 8192;
   Result.MaxBodySize      := 4 * 1024 * 1024;
   Result.MaxConnections   := 10000;
+  Result.Compressible     := False;
+  Result.MinCompressSize  := 512;
   Result.SSLEnabled       := False;
   Result.SSLCertFile      := '';
   Result.SSLKeyFile       := '';
@@ -371,15 +417,59 @@ end;
 
 | File | Change | Risk to existing code |
 |---|---|---|
+| `Horse.pas` | Add `{$DEFINE HORSE_CROSSSOCKET}` conditional branch for `THorseProvider` type alias | Zero — define is opt-in |
 | `Horse.Request.pas` | Add `Create` overload (no params) | Zero — new overload, original untouched |
 | `Horse.Request.pas` | Add `Clear` procedure | Zero — new method |
 | `Horse.Response.pas` | Add `CustomHeaders` property | Zero — exposes existing field |
 | `Horse.Response.pas` | Add `ContentStream` property | Zero — new field + property |
 | `Horse.Response.pas` | Add `Clear` procedure | Zero — new method |
+| `Horse.Core.RouterTree.pas` | Nil-guard `RawWebRequest` in `Execute` | Zero — Indy branch identical to upstream |
 | `Horse.Provider.Abstract.pas` | Add `ListenWithConfig` virtual class method | Zero — default delegates to `Listen` |
 | `Horse.Provider.Config.pas` | New file — shared config record | Zero — new file |
 
-All seven changes are purely additive. No existing method, property, constructor, or destructor is modified.
+All changes are purely additive. No existing method, property, constructor, or destructor is modified.
+
+---
+
+## Applying the Patches
+
+All patch files are in the `patches/` directory of this repository, mirroring the target directory structure.
+
+```
+patches/
+├── horse/src/
+│   ├── Horse.Request.pas           — Change 1 (PATCH-REQ-1/2/3/4/5)
+│   ├── Horse.Response.pas          — Change 2 (PATCH-RES-1/2/3/4)
+│   ├── Horse.Core.RouterTree.pas   — Change 3 (PATCH-TREE-1)
+│   └── Horse.Provider.Config.pas   — Change 4 / new file
+└── Delphi-Cross-Socket/Net/
+    ├── Net.CrossSslSocket.OpenSSL.pas  — mTLS support (SetCACertificateFile, SetVerifyPeer)
+    └── Net.CrossSocket.Iocp.pas        — DEBUG-build shutdown fix (PATCH-IOCP-1)
+```
+
+To apply, copy each file over the corresponding source file in the cloned repo:
+
+```bash
+# Horse patches
+cp patches/horse/src/Horse.Request.pas         horse/src/Horse.Request.pas
+cp patches/horse/src/Horse.Response.pas        horse/src/Horse.Response.pas
+cp patches/horse/src/Horse.Core.RouterTree.pas horse/src/Horse.Core.RouterTree.pas
+cp patches/horse/src/Horse.Provider.Config.pas horse/src/Horse.Provider.Config.pas
+
+# Delphi-Cross-Socket patches
+cp patches/Delphi-Cross-Socket/Net/Net.CrossSslSocket.OpenSSL.pas \
+   Delphi-Cross-Socket/Net/Net.CrossSslSocket.OpenSSL.pas
+cp patches/Delphi-Cross-Socket/Net/Net.CrossSocket.Iocp.pas \
+   Delphi-Cross-Socket/Net/Net.CrossSocket.Iocp.pas
+```
+
+To inspect what any individual patch changes:
+
+```bash
+diff patches/horse/src/Horse.Request.pas horse/src/Horse.Request.pas
+```
+
+`Horse.Provider.Abstract.pas` and `Horse.pas` must be edited manually — their changes depend on the rest of your project's provider configuration and are not included as drop-in patch files.
 
 ---
 
@@ -413,34 +503,31 @@ The patched Horse fork is pulled in automatically as a transitive dependency of 
    git clone https://github.com/your-org/horse          # patched fork
    git clone https://github.com/winddriver/Delphi-Cross-Socket
    ```
-2. Add to your project's search path **in this order** (patched Horse before any other Horse source):
+2. Apply the patches as described in [Applying the Patches](#applying-the-patches).
+3. Add to your project's search path **in this order** (patched Horse before any other Horse source):
    - `horse/src/`
    - `horse-provider-crosssocket/src/`
    - `Delphi-Cross-Socket/Net/`
    - `Delphi-Cross-Socket/Utils/`
    - `Delphi-Cross-Socket/OpenSSL/`
-3. Do **not** add the original `HashLoad/horse/src/` to the search path. The compiler must find the patched `Horse.Request.pas`, `Horse.Response.pas`, and `Horse.Provider.Abstract.pas` from your fork.
+4. Do **not** add the original `HashLoad/horse/src/` to the search path. The compiler must find the patched `Horse.Request.pas`, `Horse.Response.pas`, `Horse.Core.RouterTree.pas`, and `Horse.Provider.Abstract.pas` from your fork.
 
 ---
 
 ## Quick Start
 
-The only two changes vs a standard Horse project are:
-
-1. Add `{$DEFINE HORSE_NOPROVIDER}` before the `uses` clause — this tells Horse not to load its default Indy provider.
-2. Add `Horse.Provider.CrossSocket` to `uses`.
-
-The `THorse.Listen` call stays **identical**.
+Add `HORSE_CROSSSOCKET` to your project's conditional defines (**Project Options → Delphi Compiler → Conditional defines**). That single define tells `Horse.pas` to resolve `THorseProvider` to `THorseProviderCrossSocket` — no other application code change is needed.
 
 ```delphi
 program MyAPI;
 
 {$APPTYPE CONSOLE}
-{$DEFINE HORSE_NOPROVIDER}  // ← disable the default Indy provider
+
+// Set HORSE_CROSSSOCKET in Project Options → Conditional defines, or declare it here:
+{$DEFINE HORSE_CROSSSOCKET}
 
 uses
-  Horse,
-  Horse.Provider.CrossSocket;  // ← add this
+  Horse;   // Horse.pas resolves THorseProvider to THorseProviderCrossSocket automatically
 
 begin
   THorse.Get('/ping',
@@ -449,7 +536,7 @@ begin
       Res.Send('pong');
     end);
 
-  THorse.Listen(9000);  // ← unchanged
+  THorse.Listen(9000);   // unchanged from any existing Horse project
 end.
 ```
 
@@ -459,13 +546,12 @@ That is all. Every existing middleware (`horse-jwt`, `horse-cors`, `horse-jhonso
 
 ## HTTPS / TLS
 
-Use `ListenWithConfig` and populate the `SSLEnabled` fields on `THorseCrossSocketConfig`:
+Use `ListenWithConfig` and populate the SSL fields on `THorseCrossSocketConfig`. The config type lives in `Horse.Provider.Config`:
 
 ```delphi
 uses
   Horse,
-  Horse.Provider.CrossSocket,
-  Horse.Provider.CrossSocket.Server;  // THorseCrossSocketConfig
+  Horse.Provider.Config;   // THorseCrossSocketConfig
 
 var
   Cfg: THorseCrossSocketConfig;
@@ -478,7 +564,7 @@ begin
   Cfg.SSLKeyFile     := 'key.pem';
   Cfg.SSLKeyPassword := '';           // leave empty if key has no passphrase
 
-  THorseProviderCrossSocket.ListenWithConfig(9443, Cfg);
+  THorse.ListenWithConfig(9443, Cfg);
 end.
 ```
 
@@ -498,6 +584,8 @@ Cfg.SSLCACertFile := 'ca-cert.pem';   // CA that signed client certs
 Cfg.SSLVerifyPeer := True;            // reject clients without a valid cert
 ```
 
+> mTLS requires the Delphi-Cross-Socket patch for `Net.CrossSslSocket.OpenSSL.pas` — see [Applying the Patches](#applying-the-patches).
+
 ---
 
 ## Advanced Configuration
@@ -513,16 +601,20 @@ Cfg.ReadTimeout      := 20;     // seconds — mitigates slow-HTTP attacks
 Cfg.DrainTimeoutMs   := 5000;   // ms to wait for in-flight requests on Stop
 
 // Size limits
-Cfg.MaxHeaderSize    := 8192;           // bytes (default: 8 KB)
+Cfg.MaxHeaderSize    := 8192;             // bytes (default: 8 KB)
 Cfg.MaxBodySize      := 4 * 1024 * 1024; // bytes (default: 4 MB)
 
 // Connection ceiling — prevents file-descriptor exhaustion DoS
 Cfg.MaxConnections   := 10000;
 
+// Response compression
+Cfg.Compressible     := True;    // enable gzip/deflate for compressible content types
+Cfg.MinCompressSize  := 512;     // bytes — skip compression for smaller bodies
+
 // Suppress Server: header (default: 'unknown')
 Cfg.ServerBanner     := '';
 
-THorseProviderCrossSocket.ListenWithConfig(9000, Cfg);
+THorse.ListenWithConfig(9000, Cfg);
 ```
 
 ### Custom error logging
@@ -530,7 +622,7 @@ THorseProviderCrossSocket.ListenWithConfig(9000, Cfg);
 Worker-pool exceptions (and unhandled pipeline exceptions) are routed to a pluggable callback. The default writes to `ErrOutput`. Override it after `Listen`:
 
 ```delphi
-THorseProviderCrossSocket.Listen(9000);
+THorse.Listen(9000);
 
 THorseWorkerPool.Instance.OnTaskError :=
   procedure(const E: Exception; ATaskIndex: Int64)
@@ -614,7 +706,7 @@ CrossSocket (IOCP / epoll)
 └───────────────────┬────────────────────────┘
                     │
         THorseContextPool.Release
-        (Reset — never Free)
+        (Reset via Clear — never Free)
 ```
 
 ---
@@ -665,6 +757,8 @@ This provider was designed with a layered defence-in-depth approach. Every prote
 ### Object pool
 
 The context pool resets **every field** between requests — including `Session`, `Body`, `RemoteAddr`, and all middleware-injected values — before returning an object to the pool. A failed reset discards the context rather than returning it dirty.
+
+The reset path calls `THorseRequest.Clear` and `THorseResponse.Clear` (not the `Body(nil)` setter). This is critical: the `Body(AObject)` setter always frees the existing `FBody` before assigning — correct for the Indy ownership model, but fatal on the CrossSocket path where `FBody` is a **non-owning** reference into CrossSocket's socket buffer. `Clear` sets `FBody := nil` directly without calling `Free`, preventing a double-free when CrossSocket later destroys the request object. (See `[SEC-9]` / `FIX-POOL-1` in `Pool.pas`.)
 
 In `DEBUG` builds, fields are written with sentinel poison values before being cleared, turning silent data-leakage bugs into immediate and obvious failures during development.
 
@@ -731,7 +825,7 @@ All existing Horse middleware and application code is compatible without modific
 | `Req.Body` (TStream) | ✓ zero-copy |
 | `Res.Send` / `Res.Status` / `Res.AddHeader` | ✓ |
 | SSL / TLS | ✓ OpenSSL 3.x |
-| Mutual TLS | ✓ |
+| Mutual TLS | ✓ (requires Delphi-Cross-Socket patch) |
 | Windows (IOCP) | ✓ |
 | Linux (epoll) | ✓ |
 | macOS (kqueue) | ✓ via CrossSocket |
@@ -750,6 +844,16 @@ src/
 ├── Horse.Provider.CrossSocket.Response.pas THorseResponse → ICrossHttpResponse bridge
 └── Horse.Provider.CrossSocket.WorkerPool.pas  CPU-bound worker thread pool
 
+patches/
+├── horse/src/
+│   ├── Horse.Request.pas           — PATCH-REQ-*: no-arg ctor, Clear, shadow fields, nil-guards
+│   ├── Horse.Response.pas          — PATCH-RES-*: Clear, shadow fields, CustomHeaders, ContentStream
+│   ├── Horse.Core.RouterTree.pas   — PATCH-TREE-1: nil-guard for RawWebRequest in Execute
+│   └── Horse.Provider.Config.pas   — THorseCrossSocketConfig record (new file)
+└── Delphi-Cross-Socket/Net/
+    ├── Net.CrossSslSocket.OpenSSL.pas  — mTLS support
+    └── Net.CrossSocket.Iocp.pas        — DEBUG-build shutdown fix
+
 samples/
 └── server.dpr                              Minimal working server example
 ```
@@ -763,7 +867,7 @@ Entry point. `THorseProviderCrossSocket.Listen(port)` or `ListenWithConfig(port,
 Wraps `TCrossHttpServer`. Owns `THorseCrossSocketConfig` (all timeouts, size limits, SSL settings). `Stop` is synchronous — it waits up to `DrainTimeoutMs` for active requests to finish before returning.
 
 **`Horse.Provider.CrossSocket.Pool`**
-Pre-allocates `THorseContext` objects at startup and reuses them across requests via `Acquire` / `Release`. `Reset` explicitly wipes every security-sensitive field. In `DEBUG` builds, poison values detect partial-reset bugs immediately.
+Pre-allocates `THorseContext` objects at startup and reuses them across requests via `Acquire` / `Release`. `Reset` calls `THorseRequest.Clear` and `THorseResponse.Clear` — never the `Body(nil)` setter, which would free CrossSocket's non-owning stream reference and produce `EInvalidPointer` on every POST request (`FIX-POOL-1`). In `DEBUG` builds, poison values detect partial-reset bugs immediately.
 
 **`Horse.Provider.CrossSocket.Request`**
 `TRequestBridge.Populate` validates and translates `ICrossHttpRequest` into `THorseRequest`. Returns `rvOK`, `rvBadRequest`, or `rvMethodNotAllowed` — the pipeline is never entered for invalid requests.
