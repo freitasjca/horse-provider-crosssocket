@@ -24,9 +24,13 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 | Linux first-class support | ⚠ unstable | ✓ |
 | OpenSSL 3.x native | ✗ | ✓ |
 | gzip / deflate receive | manual | automatic |
-| Enforced request size limits | ✗ | ✓ |
-| HTTP request-smuggling protection | ✗ | ✓ |
+| Enforced request size limits ¹ | ✗ | ✓ |
+| HTTP request-smuggling protection ¹ | ✗ | ✓ |
+| Pre-pipeline input validation ¹ | ✗ | ✓ |
+| Security response headers ¹ | ✗ | ✓ |
 | Graceful shutdown drain | ✓ | ✓ |
+
+¹ CrossSocket enforces these **before** the Horse pipeline via `TRequestBridge.Populate` and `TResponseBridge.Flush`. Equivalent middleware for the Indy path is provided in the [Security Model](#security-model) section.
 
 ---
 
@@ -43,6 +47,7 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 - [Worker Pool](#worker-pool)
 - [Architecture](#architecture)
 - [Security Model](#security-model)
+  - [Equivalent protection on Indy](#equivalent-protection-on-indy)
 - [Default Limits Reference](#default-limits-reference)
 - [Compatibility](#compatibility)
 - [File Reference](#file-reference)
@@ -715,7 +720,11 @@ CrossSocket (IOCP / epoll)
 
 This provider was designed with a layered defence-in-depth approach. Every protection is enforced by default and cannot be accidentally disabled.
 
-### Input validation (before the Horse pipeline is entered)
+> **Scope note — CrossSocket only.** The input validation and transport protections in this section are implemented by `TRequestBridge.Populate` and `THorseCrossSocketServer`, which are part of this provider. They apply **only when `{$DEFINE HORSE_CROSSSOCKET}` is active**. The Indy provider (`Horse.Provider.Console`, `Horse.Provider.Daemon`, etc.) does not perform any of these checks — Indy passes every request directly to the Horse pipeline without validation. See [Equivalent protection on Indy](#equivalent-protection-on-indy) below for how to add these checks as Horse middleware when using Indy.
+
+### Input validation — CrossSocket only (before the Horse pipeline is entered)
+
+`TRequestBridge.Populate` runs these checks on every request. If any check fails, a `400 Bad Request` (or `405 Method Not Allowed`) is returned **directly** — the middleware chain and route handlers are never called. This means a malformed or oversized request cannot reach application code at all.
 
 | Protection | Default | RFC / standard |
 |---|---|---|
@@ -731,7 +740,7 @@ This provider was designed with a layered defence-in-depth approach. Every prote
 | Query-string key limit | 2 KB | — |
 | Query-string value limit | 2 KB | — |
 
-### Transport
+### Transport — CrossSocket only
 
 | Protection | Default |
 |---|---|
@@ -743,7 +752,9 @@ This provider was designed with a layered defence-in-depth approach. Every prote
 | Mutual TLS (client cert) | opt-in |
 | `Server:` header suppressed | `unknown` |
 
-### Response output
+### Response output — CrossSocket only
+
+`TResponseBridge.Flush` applies these to every response sent through the CrossSocket provider. The Indy provider has no equivalent; add a Horse middleware if you need these on Indy (see below).
 
 | Protection | Default |
 |---|---|
@@ -754,7 +765,7 @@ This provider was designed with a layered defence-in-depth approach. Every prote
 | `Referrer-Policy: strict-origin-when-cross-origin` | always |
 | `Cache-Control: no-store` | always |
 
-### Object pool
+### Object pool — CrossSocket only
 
 The context pool resets **every field** between requests — including `Session`, `Body`, `RemoteAddr`, and all middleware-injected values — before returning an object to the pool. A failed reset discards the context rather than returning it dirty.
 
@@ -776,6 +787,119 @@ THorse.Use(
     Next;
   end);
 ```
+
+---
+
+### Equivalent protection on Indy
+
+When using the standard Indy provider (`Horse.Provider.Console`, `Horse.Provider.Daemon`, etc.), **none** of the CrossSocket input validation or response hardening is active. Indy hands every request directly to the Horse middleware chain without any pre-validation.
+
+You can add equivalent protection as Horse middleware that runs before your application routes. Because it is registered with `THorse.Use`, it runs on **all providers** — including CrossSocket, where it is redundant but harmless.
+
+#### Method allowlist + smuggling guard
+
+```delphi
+const
+  ALLOWED_METHODS: array[0..6] of string = (
+    'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS');
+
+THorse.Use(
+  procedure(Req: THorseRequest; Res: THorseResponse; Next: TProc)
+  var
+    LMethod, LCL, LTE: string;
+    LAllowed: Boolean;
+    M: string;
+  begin
+    LMethod := Req.Method.ToUpper;
+
+    // Method allowlist — reject TRACE, CONNECT, and unknown verbs
+    LAllowed := False;
+    for M in ALLOWED_METHODS do
+      if M = LMethod then begin LAllowed := True; Break; end;
+    if not LAllowed then
+    begin
+      Res.Status(405).Send('Method Not Allowed');
+      Exit;  // do NOT call Next
+    end;
+
+    // RFC 7230 §3.3.3 — reject CL + TE together (request-smuggling vector)
+    LCL := Req.Headers['Content-Length'];
+    LTE := Req.Headers['Transfer-Encoding'];
+    if (LCL <> '') and (LTE <> '') then
+    begin
+      Res.Status(400).Send('Bad Request');
+      Exit;
+    end;
+
+    Next;
+  end);
+```
+
+#### Host header validation
+
+```delphi
+THorse.Use(
+  procedure(Req: THorseRequest; Res: THorseResponse; Next: TProc)
+  var
+    LHost: string;
+    I: Integer;
+    C: Char;
+  begin
+    LHost := Req.Headers['Host'];
+    if LHost = '' then
+    begin
+      Res.Status(400).Send('Bad Request');
+      Exit;
+    end;
+    // Reject non-printable characters (header-injection guard)
+    for I := 1 to Length(LHost) do
+    begin
+      C := LHost[I];
+      if (Ord(C) < 32) or (Ord(C) = 127) then
+      begin
+        Res.Status(400).Send('Bad Request');
+        Exit;
+      end;
+    end;
+    Next;
+  end);
+```
+
+#### Security response headers
+
+```delphi
+THorse.Use(
+  procedure(Req: THorseRequest; Res: THorseResponse; Next: TProc)
+  begin
+    Next;  // call first so route handlers run, then add headers to the response
+    Res.AddHeader('X-Content-Type-Options', 'nosniff');
+    Res.AddHeader('X-Frame-Options', 'DENY');
+    Res.AddHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    Res.AddHeader('Cache-Control', 'no-store');
+  end);
+```
+
+#### Size limits
+
+Indy does not enforce request body or header size limits natively. Add a guard early in the middleware chain:
+
+```delphi
+const
+  MAX_BODY_BYTES = 4 * 1024 * 1024;  // 4 MB
+
+THorse.Use(
+  procedure(Req: THorseRequest; Res: THorseResponse; Next: TProc)
+  begin
+    if Assigned(Req.Body) and (Req.Body.Size > MAX_BODY_BYTES) then
+    begin
+      Res.Status(413).Send('Payload Too Large');
+      Exit;
+    end;
+    Next;
+  end);
+```
+
+> **Note:** On Indy, Indy has already read the full body into memory before the middleware runs — the size check above prevents application code from processing an oversized payload, but it does not prevent Indy from buffering it. For a hard limit that prevents buffering, configure Indy's `TIdHTTPServer.MaximumHeaderLineCount` and consider a reverse proxy (nginx, HAProxy) in front of the service.
 
 ---
 
