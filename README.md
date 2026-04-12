@@ -48,6 +48,7 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 - [Architecture](#architecture)
 - [Security Model](#security-model)
   - [Equivalent protection on Indy](#equivalent-protection-on-indy)
+- [CI / CD](#ci--cd)
 - [Default Limits Reference](#default-limits-reference)
 - [Compatibility](#compatibility)
 - [File Reference](#file-reference)
@@ -900,6 +901,69 @@ THorse.Use(
 ```
 
 > **Note:** On Indy, Indy has already read the full body into memory before the middleware runs — the size check above prevents application code from processing an oversized payload, but it does not prevent Indy from buffering it. For a hard limit that prevents buffering, configure Indy's `TIdHTTPServer.MaximumHeaderLineCount` and consider a reverse proxy (nginx, HAProxy) in front of the service.
+
+---
+
+## CI / CD
+
+All CI files are in the repository root and work against the `samples/tests/` integration test suite.
+
+### Prerequisites on the build agent (Windows)
+
+| Requirement | Notes |
+|---|---|
+| Delphi 10.4 Sydney or later | Set `DELPHI_ROOT` env var to the install directory (e.g. `C:\Program Files (x86)\Embarcadero\Studio\22.0`) |
+| [Boss](https://github.com/HashLoad/boss) in `PATH` | Resolves `boss.json` dependencies — the patched Horse and Delphi-Cross-Socket forks |
+| PowerShell | Used by `run-tests.bat` for the server health-check (`Invoke-WebRequest`) |
+| `.dproj` files committed | `samples/tests/HorseCSTestServer.dproj` and `HorseCSTestClient.dproj` must exist — see `samples/tests/README.md` for required IDE settings |
+
+### How the pipeline works
+
+```
+boss install
+    ↓ pulls patched forks (no separate patch-apply step — forks are already patched)
+
+msbuild HorseCSTestServer.dproj  (HORSE_CROSSSOCKET defined, Win64 Release)
+msbuild HorseCSTestClient.dproj  (Win64 Release)
+    ↓
+
+scripts\run-tests.bat
+    1. start HorseCSTestServer.exe in background (port 9100)
+    2. poll GET /ping until server is ready (up to 10 s)
+    3. run HorseCSTestClient.exe — 14 integration tests
+    4. kill server unconditionally
+    5. exit with client exit code (0 = all pass, N = N failures)
+```
+
+### Jenkins
+
+`Jenkinsfile` at the repo root. Targets an agent labelled `windows && delphi`:
+
+```groovy
+// stages: Checkout → Install deps → Build → Integration tests → Archive
+```
+
+Run manually:
+
+```bat
+scripts\build.bat Release Win64
+scripts\run-tests.bat Win64 Release
+```
+
+### GitHub Actions
+
+`.github/workflows/ci.yml` — triggers on push to `main`/`develop` and on pull requests. Requires a self-hosted runner registered with the `delphi` label (Repository → Settings → Actions → Runners).
+
+### MSBuild parameters reference
+
+| Parameter | Value | Purpose |
+|---|---|---|
+| `/t:Build` | — | Compile the project |
+| `/t:Clean` | — | Remove all output files |
+| `/p:Config=Release` | Release \| Debug | Build configuration |
+| `/p:Platform=Win64` | Win64 \| Win32 | Target platform |
+| `/m` | — | Parallel compilation (multi-core) |
+| `/nologo` | — | Suppress MSBuild version banner |
 
 ---
 
