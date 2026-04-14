@@ -7,13 +7,23 @@ LeftCol=1
 Elisions=
 Bookmarks=
 EditViewName=C:\lang\Repo\horse\src\Horse.Request.pas
-
 [ClosedView_QzpcbGFuZ1xSZXBvXERlbHBoaS1Dcm9zcy1Tb2NrZXRcTmV0XE5ldC5Dcm9zc0h0dHBTZXJ2ZXIu
 cGFz]
 Module=C:\lang\Repo\Delphi-Cross-Socket\Net\Net.CrossHttpServer.pas
 CursorX=46
 CursorY=17
 TopLine=1
+LeftCol=1
+Elisions={{1635,4},{1649,15},{'HttpParser事件'}}{{1823,4},{1826,15},{'内部: 基础发送方法'}}{{1830,4},{1839,15},{'压缩发送'}}{{1841,4},{1850,15},{'不压缩发送'}}{{1852,4},{1871,15},{'常规方法'}}{{2296,2},{2317,13},{'创建Body'}}{{3312,4},{3323,15},{'Session'}}{{3328,4},{3341,15},{'中间件'}}{{3343,4},{3357,15},{'路由'}}{{3359,4},{3368,15},{'响应请求事件'}}
+Bookmarks=
+EditViewName=C:\lang\Repo\Delphi-Cross-Socket\Net\Net.CrossHttpServer.pas
+
+[ClosedView_QzpcbGFuZ1xSZXBvXERlbHBoaS1Dcm9zcy1Tb2NrZXRcTmV0XE5ldC5Dcm9zc0h0dHBTZXJ2ZXIu
+cGFz]
+Module=C:\lang\Repo\Delphi-Cross-Socket\Net\Net.CrossHttpServer.pas
+CursorX=77
+CursorY=2288
+TopLine=2259
 LeftCol=1
 Elisions={{1635,4},{1649,15},{'HttpParser事件'}}{{1823,4},{1826,15},{'内部: 基础发送方法'}}{{1830,4},{1839,15},{'压缩发送'}}{{1841,4},{1850,15},{'不压缩发送'}}{{1852,4},{1871,15},{'常规方法'}}{{2296,2},{2317,13},{'创建Body'}}{{3312,4},{3323,15},{'Session'}}{{3328,4},{3341,15},{'中间件'}}{{3343,4},{3357,15},{'路由'}}{{3359,4},{3368,15},{'响应请求事件'}}
 Bookmarks=

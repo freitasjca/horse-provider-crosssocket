@@ -14,77 +14,34 @@
   Run this program first, then run HorseCSTestClient.
 
   Routes exercised by the client test suite:
-    GET    /ping                      health check
-    GET    /methods/get               GET method probe
-    POST   /methods/post              POST body echo
-    PUT    /methods/put/:id           PUT with path param
-    DELETE /methods/delete/:id        DELETE with path param
-    PATCH  /methods/patch/:id         PATCH with path param
-    HEAD   /methods/head              HEAD — header only, no body
-    GET    /params/path/:id           path param echo
-    GET    /params/query              query param echo  (?name=X&value=Y)
-    GET    /cookies/set               sets session + user cookies
-    GET    /cookies/echo              echoes Cookie values back as JSON
-    POST   /upload                    multipart: 'file' stream + 'fieldname' text
-    GET    /download                  text/plain with Content-Disposition header
-    GET    /headers/echo              echoes X-Test-Header back
+    GET    /ping                        health check
+    GET    /methods/get                 GET method probe
+    POST   /methods/post                POST body echo
+    PUT    /methods/put/:id             PUT with path param
+    DELETE /methods/delete/:id          DELETE with path param
+    PATCH  /methods/patch/:id           PATCH with path param
+    HEAD   /methods/head                HEAD — header only, no body
+    GET    /params/path/:id             single path param echo
+    GET    /params/query                query param echo  (?name=X&value=Y)
+    GET    /params/multi/:a/:b          two path params in one route
+    GET    /cookies/set                 sets session + user cookies
+    GET    /cookies/echo                echoes Cookie values back as JSON
+    POST   /upload                      multipart: 'file' stream + 'fieldname' text
+    GET    /download                    text/plain with Content-Disposition header
+    GET    /headers/echo                echoes X-Test-Header back
+    POST   /echo/body                   echoes body text + size (pool isolation tests)
+    GET    /status/:code                responds with the HTTP status from the path param
+    GET    /response/large              sends a fixed 65536-byte body (buffer tests)
 }
 
 uses
   System.SysUtils,
   System.Classes,
+  //Horse,
+  //Horse.Commons,
 {$IFDEF HORSE_CROSSSOCKET}
-  Horse.Provider.CrossSocket.WorkerPool in '..\..\src\Horse.Provider.CrossSocket.WorkerPool.pas',
-  Horse.Provider.CrossSocket.Server in '..\..\src\Horse.Provider.CrossSocket.Server.pas',
-  Horse.Provider.CrossSocket.Response in '..\..\src\Horse.Provider.CrossSocket.Response.pas',
-  Horse.Provider.CrossSocket.Request in '..\..\src\Horse.Provider.CrossSocket.Request.pas',
-  Horse.Provider.CrossSocket.Pool in '..\..\src\Horse.Provider.CrossSocket.Pool.pas',
-  Horse.Provider.CrossSocket in '..\..\src\Horse.Provider.CrossSocket.pas',
-  Net.CrossHttpClient in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpClient.pas',
-  Net.CrossHttpParams in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpParams.pas',
-  CnSM3 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSM3.pas',
-  CnSHA3 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSHA3.pas',
-  CnSHA2 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSHA2.pas',
-  CnSHA1 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnSHA1.pas',
-  CnRandom in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnRandom.pas',
-  CnPemUtils in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnPemUtils.pas',
-  CnNative in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnNative.pas',
-  CnMD5 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnMD5.pas',
-  CnKDF in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnKDF.pas',
-  CnFloat in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnFloat.pas',
-  CnDES in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnDES.pas',
-  CnConsts in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnConsts.pas',
-  CnBase64 in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnBase64.pas',
-  CnAES in '..\..\..\Delphi-Cross-Socket\CnPack\Crypto\CnAES.pas',
-  DTF.Hash in '..\..\..\Delphi-Cross-Socket\DelphiToFPC\DTF.Hash.pas',
-  Net.Wship6 in '..\..\..\Delphi-Cross-Socket\Net\Net.Wship6.pas',
-  Net.Winsock2 in '..\..\..\Delphi-Cross-Socket\Net\Net.Winsock2.pas',
-  Net.SocketAPI in '..\..\..\Delphi-Cross-Socket\Net\Net.SocketAPI.pas',
-  Net.OpenSSL in '..\..\..\Delphi-Cross-Socket\Net\Net.OpenSSL.pas',
-  Net.CrossSslSocket.Types in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.Types.pas',
-  Net.CrossSslSocket in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.pas',
-  Net.CrossSslSocket.OpenSSL in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.OpenSSL.pas',
-  Net.CrossSslSocket.Base in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSslSocket.Base.pas',
-  Net.CrossSocket in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSocket.pas',
-  Net.CrossSocket.Iocp in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSocket.Iocp.pas',
-  Net.CrossSocket.Base in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossSocket.Base.pas',
-  Net.CrossServer in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossServer.pas',
-  Net.CrossHttpUtils in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpUtils.pas',
-  Net.CrossHttpServer in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpServer.pas',
-  Net.CrossHttpRouterDirUtils in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpRouterDirUtils.pas',
-  Net.CrossHttpRouter in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpRouter.pas',
-  Net.CrossHttpParser in '..\..\..\Delphi-Cross-Socket\Net\Net.CrossHttpParser.pas',
-  Utils.Utils in '..\..\..\Delphi-Cross-Socket\Utils\Utils.Utils.pas',
-  Utils.SyncObjs in '..\..\..\Delphi-Cross-Socket\Utils\Utils.SyncObjs.pas',
-  Utils.StrUtils in '..\..\..\Delphi-Cross-Socket\Utils\Utils.StrUtils.pas',
-  Utils.Rtti in '..\..\..\Delphi-Cross-Socket\Utils\Utils.Rtti.pas',
-  Utils.RegEx in '..\..\..\Delphi-Cross-Socket\Utils\Utils.RegEx.pas',
-  Utils.Logger in '..\..\..\Delphi-Cross-Socket\Utils\Utils.Logger.pas',
-  Utils.IOUtils in '..\..\..\Delphi-Cross-Socket\Utils\Utils.IOUtils.pas',
-  Utils.Hash in '..\..\..\Delphi-Cross-Socket\Utils\Utils.Hash.pas',
-  Utils.DateTime in '..\..\..\Delphi-Cross-Socket\Utils\Utils.DateTime.pas',
-  Utils.ArrayUtils in '..\..\..\Delphi-Cross-Socket\Utils\Utils.ArrayUtils.pas',
-  Utils.AnonymousThread in '..\..\..\Delphi-Cross-Socket\Utils\Utils.AnonymousThread.pas',
+  Horse.Provider.CrossSocket,
+  Horse.Provider.CrossSocket.WorkerPool,
 {$ENDIF}
   ThirdParty.Posix.Syslog in '..\..\..\horse\src\ThirdParty.Posix.Syslog.pas',
   Horse.WebModule in '..\..\..\horse\src\Horse.WebModule.pas' {HorseWebModule: TWebModule},
@@ -118,7 +75,8 @@ uses
   Horse.Core.RouterTree in '..\..\..\horse\src\Horse.Core.RouterTree.pas';
 
 const
-  TEST_PORT = 9010;
+  TEST_PORT           = 9010;
+  LARGE_RESPONSE_SIZE = 65536; // bytes, must match client constant
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -213,6 +171,16 @@ begin
     end
   );
 
+  // Two path params in a single route — exercises router tree multi-segment matching.
+  THorse.Get('/params/multi/:a/:b',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(Format('{"a":"%s","b":"%s"}',
+           [JE(Req.Params['a']), JE(Req.Params['b'])]));
+    end
+  );
+
   // ── Cookies ───────────────────────────────────────────────────────────────────
 
   // Sets two cookies in Set-Cookie headers.
@@ -283,6 +251,53 @@ begin
       Res.ContentType('application/json; charset=utf-8')
          .Send(Format('{"X-Test-Header":"%s"}',
            [JE(Req.Headers['X-Test-Header'])]));
+    end
+  );
+
+  // ── Body echo ─────────────────────────────────────────────────────────────────
+  // Echoes back the raw request body and its byte length.
+  // Used by: pool isolation tests, large-body test, empty-body test.
+  // Response: {"body":"<text>","size":<n>}
+  THorse.Post('/echo/body',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LBody: string;
+    begin
+      LBody := Req.Body;
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(Format('{"body":"%s","size":%d}',
+           [JE(LBody), Length(TEncoding.UTF8.GetBytes(LBody))]));
+    end
+  );
+
+  // ── Explicit status code ──────────────────────────────────────────────────────
+  // Responds with the HTTP status code extracted from the path parameter.
+  // Used to verify that non-200 codes flow through the pipeline correctly.
+  // GET /status/400 → 400 Bad Request  {"status":400}
+  // GET /status/500 → 500 Internal Server Error  {"status":500}
+  THorse.Get('/status/:code',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LCode: Integer;
+    begin
+      LCode := StrToIntDef(Req.Params['code'], 200);
+      if (LCode < 100) or (LCode > 599) then
+        LCode := 400;
+      Res.ContentType('application/json; charset=utf-8')
+         .Status(LCode)
+         .Send(Format('{"status":%d}', [LCode]));
+    end
+  );
+
+  // ── Large response ────────────────────────────────────────────────────────────
+  // Returns a body of exactly LARGE_RESPONSE_SIZE bytes.
+  // Used to verify that large response payloads are transmitted without
+  // truncation or corruption (CrossSocket async write-completion chain).
+  THorse.Get('/response/large',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('text/plain; charset=utf-8')
+         .Send(StringOfChar('X', LARGE_RESPONSE_SIZE));
     end
   );
 

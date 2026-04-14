@@ -43,6 +43,17 @@ unit Horse.Provider.CrossSocket.Response;
            Stream position reset before send. Bridge never frees the stream.
 
   ── Improvements ────────────────────────────────────────────────────────────
+  [FIX-EMPTY-STATUS] Empty-body responses with status >= 400 raced with TCP
+           delivery on the client.  CrossSocket's _Send immediately calls
+           Disconnect() when the body source returns False (empty body), which
+           fires shutdown(SD_BOTH) in the same WSASend completion callback as
+           the header write.  The client sees Connection: keep-alive, marks the
+           connection rsIdle, and re-uses it for the next request before the
+           server's FIN arrives — sending a new request on a half-closed socket
+           and getting a RST.  Fix: for status >= 400 with no body, WriteBody
+           sends the status code as a minimal plain-text body so Disconnect
+           fires only after all data is flushed.
+
   [IMP-4]  Sent guard.
            ACrossRes.Sent is checked at the start of Flush. If CrossSocket has
            already sent the response (e.g. via a direct ICrossHttpResponse call
@@ -261,6 +272,21 @@ begin
       IntToStr(TEncoding.UTF8.GetByteCount(AHorseRes.BodyText));
     // Send(string) confirmed overload — CrossSocket handles UTF-8 encoding
     ACrossRes.Send(AHorseRes.BodyText);
+    Exit;
+  end;
+
+  // [FIX-EMPTY-STATUS] For status >= 400 with no body, CrossSocket's _Send
+  // disconnects immediately when the body source exhausts (returns False on
+  // the first call, right after the header WSASend completes).  With nil
+  // TBytes the disconnect races with TCP delivery: the client may attempt to
+  // re-use the keep-alive connection before the server's FIN arrives, sending
+  // the next request on a half-closed socket and getting a RST.  Sending a
+  // minimal non-empty body ensures Disconnect fires only AFTER body data has
+  // been flushed, giving the client time to receive and parse the response.
+  // Content-Length is set automatically by CrossSocket's _CreateHeader.
+  if AHorseRes.Status >= 400 then
+  begin
+    ACrossRes.Send(IntToStr(AHorseRes.Status));
     Exit;
   end;
 
