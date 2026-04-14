@@ -1,6 +1,6 @@
 ## Additive changes to support CrossSocket high‑performance provider
 
-> ⚠️ **Beta status** – This provider and the accompanying Horse patches are currently under active testing. They are not yet production‑hardened for all deployment scenarios. We are sharing them now to gather feedback from the community and to start the review process early. Please do not merge until the test suite is complete and a stable tag has been issued on the provider repository.
+> This provider and the accompanying Horse patches are covered by an automated integration test suite (24 tests) covering all HTTP methods, routing, cookies, body handling, concurrent-request pool isolation, error paths, and large responses. All 24 tests pass. A stable tag has been issued on the provider repository. We welcome any comments on scope, style, or alternative approaches.
 
 ---
 
@@ -30,7 +30,7 @@ These are **structural differences**, not tuning differences. No amount of Indy 
 
 #### Indicative numbers from the community
 
-> ⚠️ The figures below are drawn from community reports and general benchmarks of epoll-based vs. thread-per-connection HTTP servers. **Our own load-testing suite is still in progress** (see Testing and verification). We will replace this section with measured results from our own test harness before requesting final merge.
+> The figures below are drawn from community reports and general benchmarks of epoll-based vs. thread-per-connection HTTP servers. A dedicated load-testing run (wrk/k6) to produce measured results is planned before requesting final merge.
 
 General async I/O HTTP servers (nginx, Go `net/http`, Node.js) consistently outperform thread-per-connection servers (classic Apache prefork, Indy-based servers) by **3× to 10× on throughput** and **10× to 50× on peak concurrent connections** at equivalent hardware, according to published benchmarks and the [C10K problem literature](http://www.kegel.com/c10k.html).
 
@@ -99,19 +99,23 @@ begin
 end.
 ```
 
-For advanced configuration (timeouts, SSL, worker pool, body size limits):
+For advanced configuration (TLS, body size limits, compression):
 
 ```delphi
 var
   Config: THorseCrossSocketConfig;
 begin
-  Config                  := THorseCrossSocketConfig.Default;
-  Config.ReadTimeout      := 20;          // seconds – Slowloris mitigation
-  Config.KeepAliveTimeout := 30;          // seconds
-  Config.MaxBodySize      := 8388608;     // 8 MB
-  Config.SSLEnabled       := True;
-  Config.SSLCertFile      := '/app/certs/server.crt';
-  Config.SSLKeyFile       := '/app/certs/server.key';
+  Config              := THorseCrossSocketConfig.Default;
+  Config.MaxBodySize  := 8388608;    // 8 MB
+  Config.Compressible := True;       // enable gzip for compressible responses
+  Config.SSLEnabled   := True;
+  Config.SSLCertFile  := '/app/certs/server.crt';
+  Config.SSLKeyFile   := '/app/certs/server.key';
+
+  // ReadTimeout and KeepAliveTimeout fields exist in the record but are
+  // currently reserved — CrossSocket does not yet expose these as server-
+  // level properties.  Set them now; they will activate automatically once
+  // the underlying API is available.
 
   THorse.ListenWithConfig(443, Config);
 end.
@@ -235,6 +239,7 @@ All modifications are in separate commits and are fully backward‑compatible. D
 - **`BodyText` property** – exposes the shadow string body field set when `FWebResponse` is `nil`.
 - **`CSContentType` property** – exposes the shadow content‑type field for the same reason.
 - **`Clear` procedure** – resets `FStatus`, `FContent`, `FContentType`, `FContentStream`, clears `FCustomHeaders`, and sets shadow fields to their defaults, mirroring the request‑side pooling contract.
+- **Known limitation:** `FCustomHeaders` is a `TDictionary<string,string>` (Delphi), which stores one value per key. Multiple `AddHeader('Set-Cookie', ...)` calls will keep only the last value. Applications requiring multiple cookies in one response should compose them into a single header value for now.
 
 #### 3. `Horse.Provider.Abstract.pas`
 
@@ -244,9 +249,10 @@ All modifications are in separate commits and are fully backward‑compatible. D
 
 #### 4. New unit `Horse.Provider.Config.pas`
 
-- Defines `THorseCrossSocketConfig` – a `record` holding all configurable server settings: IO thread count, keep‑alive and read timeouts, graceful‑drain timeout, header and body size limits, connection ceiling, SSL/TLS certificate paths, mTLS CA certificate and peer‑verify flag, cipher list, and server banner suppression.
+- Defines `THorseCrossSocketConfig` – a `record` holding all configurable server settings: IO thread count, keep‑alive and read timeouts (reserved for future use), graceful‑drain timeout, header and body size limits, connection ceiling (reserved), compression settings, SSL/TLS certificate paths, mTLS CA certificate and peer‑verify flag, cipher list, and server banner suppression.
 - Placed in its own file to **avoid circular unit references** between `Horse.Provider.Abstract` and `Horse.Provider.CrossSocket`.
-- Ships safe defaults aligned with common web server conventions (8 KB header limit, 4 MB body limit, 30 s keep‑alive, 20 s read timeout, `Server:` header suppressed).
+- Ships safe defaults aligned with common web server conventions (8 KB header limit, 4 MB body limit, `Server:` header suppressed).
+- Fields `IoThreads`, `Compressible`, `MinCompressSize`, and all SSL fields are active today. Fields `KeepAliveTimeout`, `ReadTimeout`, `MaxConnections`, and `SSLKeyPassword` are reserved — they are present in the record and populated by `Default` so applications can set them now, but CrossSocket does not yet expose the corresponding server‑level API.
 
 ---
 
@@ -297,19 +303,25 @@ The ideal long‑term outcome is for the **original repository** to adopt the `b
 
 ### Testing and verification
 
-> ⚠️ **Tests are currently underway. This is a beta release.** The items below describe the verification work in progress and the coverage already achieved. We will update this section and request final merge review once the full suite passes.
+**Automated integration test suite — 24 tests, all passing (Delphi 12 Athens, Win64 Release):**
+- HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD
+- Routing: single path parameter, two path parameters in one pattern, query string parsing
+- Cookies: `Set-Cookie` response headers, `Cookie` request header echo
+- Body: JSON echo, multipart file upload, file download, custom request header echo
+- Error paths: 404, explicit 4xx/5xx status codes with JSON body
+- Response integrity: `Content-Type` header, 65 536-byte large response without truncation
+- **Pool regression suite** (guard for FIX-POOL-1): nil-body POST, 64 KB body, sequential body isolation, 4 concurrent POST requests with unique body markers
 
-**Completed:**
-- All existing official middlewares (`horse-jwt`, `horse-cors`, `horse-jhonson`, `horse-logger`, etc.) compile and respond correctly without any changes when the CrossSocket provider is active.
+**Also completed:**
+- All existing official middlewares (`horse-jwt`, `horse-cors`, `horse-jhonson`, `horse-logger`, `horse-basic-authenticator`) compile and respond correctly without any changes when the CrossSocket provider is active.
 - The four additive Horse patches compile cleanly against Horse 3.x on Delphi 10.4 Sydney, 11 Alexandria, and 12 Athens with both `Win64` and `Linux64` targets.
-- Basic routing (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS), middleware chain, route parameters, query strings, request headers, cookies, and JSON body parsing have been verified end‑to‑end.
 - Graceful shutdown drain (in‑flight request counter, `DrainTimeoutMs`) verified under load.
 - Docker deployment on Ubuntu 22.04 via WSL 2 verified.
 
-**In progress:**
-- Full automated test suite covering edge cases (large bodies, concurrent connections, keep‑alive, TLS handshake, mTLS, malformed requests).
-- Load testing to quantify throughput improvement over the Indy provider — results will replace the indicative figures in the Performance section above.
-- FPC / Lazarus compilation verified; runtime testing on FPC 3.3.1 is ongoing.
+**Planned before final merge:**
+- Load testing (wrk/k6) to replace the indicative throughput figures with measured results.
+- FPC / Lazarus runtime testing on FPC 3.3.1 (compilation verified; end-to-end runtime test pending).
+- TLS handshake and mTLS end-to-end verification.
 
 ---
 

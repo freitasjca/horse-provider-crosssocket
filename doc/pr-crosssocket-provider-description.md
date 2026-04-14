@@ -1,6 +1,6 @@
 # Additive changes to Horse — CrossSocket high-performance transport provider
 
-> **Beta status** — This provider and the accompanying Horse patches are under active testing. We are sharing them now to gather feedback and to start the review process early. Please do not merge until the test suite is complete and a stable tag has been issued on the provider repository. We welcome any comments on scope, style, or alternative approaches.
+> This provider and the accompanying Horse patches are covered by an automated integration test suite (24 tests) that exercises all HTTP methods, routing, cookies, body handling, concurrent-request pool isolation, error paths, and large responses. All 24 tests pass. A stable tag has been issued on the provider repository. We welcome any review comments on scope, style, or implementation approach.
 
 ---
 
@@ -36,7 +36,7 @@ These are **structural differences**, not configuration differences. The thread-
 
 ### Indicative numbers
 
-> The figures below are from community reports and the general async-vs-thread-per-connection literature. Our own load-testing suite is in progress. We will replace these with measured results before requesting final merge.
+> The figures below are from community reports and the general async-vs-thread-per-connection literature. A dedicated load-testing run (wrk/k6 against a minimal Horse route, Win64 Release build) to produce measured throughput and latency numbers is planned before requesting final merge.
 
 Published benchmarks of epoll-based vs. thread-per-connection HTTP servers consistently show:
 - **3× to 10× higher throughput** at equivalent concurrency
@@ -370,7 +370,7 @@ The response bridge iterates `FCustomHeaders` when flushing, applying CRLF-strip
 
 The `CustomHeaders` read-only property (PATCH-RES-3) exposes `FCustomHeaders` to the response bridge.
 
-**Note on `Set-Cookie`:** `FCustomHeaders` is a `TDictionary` on Delphi (last value wins for duplicate keys). The response bridge (`TResponseBridge.CopyHeaders`) handles `Set-Cookie` specially: it calls `ACrossRes.Header.Add(name, value, ADupAllowed=True)` to append each cookie as a separate header line rather than overwriting. This correctly produces multiple `Set-Cookie` lines on the wire as required by RFC 6265.
+**Known limitation — `Set-Cookie` with multiple cookies:** `FCustomHeaders` is a `TDictionary<string,string>` on Delphi, which stores one value per key. Calling `AddHeader('Set-Cookie', 'a=1')` followed by `AddHeader('Set-Cookie', 'b=2')` results in only the second entry surviving in the dictionary. The response bridge (`TResponseBridge.CopyHeaders`) is prepared to forward multiple `Set-Cookie` lines using `ADupAllowed=True`, but it can only see the single entry that the dictionary retained. Applications that need to set multiple cookies in one response should compose all cookies into a single `Set-Cookie` header value or wait for a future revision that replaces `TDictionary` with a `TList<TPair<string,string>>` for this field.
 
 #### PATCH-RES-2: `Clear` procedure
 
@@ -458,7 +458,7 @@ class procedure ListenWithConfig(
 ); virtual;
 ```
 
-The CrossSocket provider needs a structured way to pass rich server configuration (TLS certificates, timeouts, connection limits, worker thread count) to the server. The existing `Listen` overloads accept only a port. Rather than adding multiple parameters to `Listen` (which would break the existing API), `ListenWithConfig` is a new method with a config record.
+The CrossSocket provider needs a structured way to pass rich server configuration (TLS certificates, timeouts, connection limits, IO thread count) to the server. The existing `Listen` overloads accept only a port. Rather than adding multiple parameters to `Listen` (which would break the existing API), `ListenWithConfig` is a new method with a config record.
 
 The base implementation:
 
@@ -498,28 +498,40 @@ Defines `THorseCrossSocketConfig` — a `record` with a `Default` class factory:
 ```pascal
 type
   THorseCrossSocketConfig = record
-    IOThreadCount:      Integer;   // default: CPU count
-    KeepAliveTimeout:   Integer;   // seconds; default 30
-    ReadTimeout:        Integer;   // seconds; Slowloris mitigation; default 20
-    DrainTimeoutMs:     Integer;   // graceful shutdown; default 5000
-    MaxHeaderCount:     Integer;   // default 100
-    MaxHeaderValueSize: Integer;   // bytes; default 8192
-    MaxBodySize:        Int64;     // bytes; default 4 MB
-    MaxConnections:     Integer;   // default 10000
-    SSLEnabled:         Boolean;
-    SSLCertFile:        string;
-    SSLKeyFile:         string;
-    SSLCACertFile:      string;    // mTLS: CA certificate for client verification
-    SSLVerifyPeer:      Boolean;   // mTLS: require valid client certificate
-    SSLCipherList:      string;
-    ServerBanner:       string;    // '' → 'unknown' in Server: header
-    WorkerThreadMin:    Integer;   // default 4
-    WorkerThreadMax:    Integer;   // default 64
+    IoThreads:        Integer;  // 0 = library default (CPU count)
+
+    // Reserved — CrossSocket does not yet expose these APIs
+    KeepAliveTimeout: Integer;  // seconds; default 30 (reserved for future use)
+    ReadTimeout:      Integer;  // seconds; Slowloris mitigation; default 20 (reserved)
+
+    DrainTimeoutMs:   Integer;  // ms; graceful shutdown wait; default 5000
+
+    MaxHeaderSize:    Integer;  // bytes; default 8192 (8 KB, nginx default)
+    MaxBodySize:      Int64;    // bytes; default 4 MB
+
+    // Reserved — CrossSocket does not yet expose this API
+    MaxConnections:   Integer;  // default 10000 (reserved for future use)
+
+    Compressible:     Boolean;  // gzip responses; default False
+    MinCompressSize:  Int64;    // minimum body size to compress; default 512
+
+    SSLEnabled:       Boolean;
+    SSLCertFile:      string;
+    SSLKeyFile:       string;
+    SSLKeyPassword:   string;   // passphrase for encrypted key (reserved for future use)
+    SSLCACertFile:    string;   // mTLS: CA certificate for client verification
+    SSLVerifyPeer:    Boolean;  // mTLS: require valid client certificate
+    SSLCipherList:    string;   // empty = CrossSocket built-in secure list
+
+    ServerBanner:     string;   // '' → emits 'unknown' in Server: header
+
     class function Default: THorseCrossSocketConfig; static;
   end;
 ```
 
 **Why a separate unit:** Both `Horse.Provider.Abstract` (which declares `ListenWithConfig`) and `Horse.Provider.CrossSocket` (which implements it) need the `THorseCrossSocketConfig` type. Placing the type in either file creates a circular dependency. A standalone unit with no dependencies on Horse internals or on CrossSocket resolves the cycle cleanly. It is a pure data declaration — no classes, no interfaces, no event handlers — so it has no negative impact on any existing build.
+
+**Fields marked reserved** (`KeepAliveTimeout`, `ReadTimeout`, `MaxConnections`, `SSLKeyPassword`): CrossSocket does not currently expose API to set these at the server level. The fields are present in the record so that applications can supply values now and have them take effect when a future version of CrossSocket exposes the underlying API. The `Default` factory already sets sensible values for them.
 
 ---
 
@@ -680,13 +692,17 @@ uses
 var
   Config: THorseCrossSocketConfig;
 begin
-  Config                  := THorseCrossSocketConfig.Default;
-  Config.ReadTimeout      := 20;          // seconds — Slowloris mitigation
-  Config.KeepAliveTimeout := 30;
-  Config.MaxBodySize      := 8388608;     // 8 MB
-  Config.SSLEnabled       := True;
-  Config.SSLCertFile      := '/app/certs/server.crt';
-  Config.SSLKeyFile       := '/app/certs/server.key';
+  Config               := THorseCrossSocketConfig.Default;
+  Config.MaxBodySize   := 8388608;     // 8 MB
+  Config.Compressible  := True;        // enable gzip for compressible responses
+  Config.SSLEnabled    := True;
+  Config.SSLCertFile   := '/app/certs/server.crt';
+  Config.SSLKeyFile    := '/app/certs/server.key';
+
+  // Note: ReadTimeout and KeepAliveTimeout fields exist in the record
+  // and are set by Default, but are currently reserved — CrossSocket
+  // does not yet expose these as server-level properties.
+  // They will take effect automatically once the underlying API is available.
 
   THorse.ListenWithConfig(443, Config);
 end.
@@ -716,19 +732,34 @@ To inspect any individual change: `diff patches/horse/src/<file>.pas horse/src/<
 
 ## Testing and verification status
 
-> **Tests are currently underway. This is a beta release.** We will update this section and request final merge review once the full suite passes.
+The provider ships with an automated integration test suite of 24 tests across two standalone console programs (`HorseCSTestServer.dpr` / `HorseCSTestClient.dpr`). All 24 tests pass on Delphi 12 Athens, Win64 Release.
 
-**Completed:**
+**Covered by the automated suite:**
+- HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD
+- Routing: single path parameter, two path parameters in one pattern, query string parsing
+- Cookies: `Set-Cookie` response headers, `Cookie` request header echo
+- Body: JSON echo, multipart file upload, file download with `Content-Disposition`, custom request header echo
+- Error paths: 404 on unregistered route, explicit 4xx/5xx status code propagation with JSON body
+- Response integrity: `Content-Type` header, 65 536-byte large response body without truncation
+- **Pool regression suite (primary guard for FIX-POOL-1):**
+  - Test 15 — empty-body POST (nil-body path, no crash after `Reset`)
+  - Test 16 — 64 KB POST body (large body stream read without truncation)
+  - Test 17 — sequential pool `Reset` isolation (request A → `/ping` → request B, no body leakage)
+  - Test 18 — 4 concurrent POST requests with unique body markers (parallel pool context isolation — a broken pool will either crash the server or mix body content across responses)
+
+**Test 18 implementation note — closure factory pattern:**  
+The four `DoRequest` callbacks are dispatched via a nested `FireOne(AIdx, AHeaders)` helper rather than inline `var LIdx := I` variables inside the loop body. Delphi 10.3/10.4 may hoist an inline loop variable to a single shared heap location, causing all four closures to see the last-written value after the loop exits. The nested procedure creates a fresh stack frame per call, guaranteeing each closure captures an independent `AIdx`.
+
+**Also completed:**
 - All existing official middlewares (`horse-jwt`, `horse-cors`, `horse-jhonson`, `horse-logger`, `horse-basic-authenticator`) compile and respond correctly with zero changes when `HORSE_CROSSSOCKET` is active
 - The Horse patches compile cleanly on Delphi 10.4 Sydney, 11 Alexandria, and 12 Athens — both `Win64` and `Linux64` targets
-- Full route coverage verified end-to-end: GET, POST, PUT, DELETE, PATCH, HEAD; route parameters, query strings, request headers, cookies, JSON body, multipart file upload, file download with `Content-Disposition`
 - Graceful shutdown drain verified under load
 - Docker deployment on Ubuntu 22.04 via WSL 2 verified
 
-**In progress:**
-- Full automated test suite (large bodies, concurrent connections, keep-alive, TLS handshake, mTLS, malformed requests)
-- Load testing to replace the indicative performance figures with measured results
-- FPC / Lazarus runtime testing on FPC 3.3.1
+**Planned before final merge:**
+- Load testing (wrk/k6) to replace the indicative performance figures in the Performance section with measured results
+- FPC / Lazarus runtime testing on FPC 3.3.1 (compilation verified; end-to-end runtime test pending)
+- TLS handshake and mTLS end-to-end verification
 
 ---
 
@@ -771,6 +802,14 @@ The ideal long-term outcome is for the original Delphi-Cross-Socket repository t
 | File | Fix ID | What was changed | Why |
 |---|---|---|---|
 | `Horse.Provider.CrossSocket.Pool.pas` | FIX-POOL-1 | Replaced `FRequest.Body(nil)` with `FRequest.Clear` in `THorseContext.Destroy`, `THorseContext.Reset`, and the `THorseContextPool.Destroy` loop | `Body(AObject)` setter always frees `FBody`; on CrossSocket path `FBody` is a non-owning reference — double-free caused `EInvalidPointer` on every POST request |
+| `Horse.Provider.CrossSocket.Server.pas` | FIX-REFCOUNT-1 | Added `FServerRef: ICrossHttpServer` field to `THorseCrossSocketServer`; assigned at startup | `TCrossHttpServer` inherits `TInterfacedObject`; without an interface reference held by the provider, `FRefCount` could fall to zero on an IO thread during `BeforeDestruction → StopLoop`, destroying the server while it was still processing requests |
+| `Horse.Provider.CrossSocket.Response.pas` | FIX-EMPTY-STATUS | `WriteBody` sends `IntToStr(AHorseRes.Status)` as a minimal text body when `Status >= 400` and no body was set | CrossSocket's `_Send` disconnects immediately when the body source is exhausted; with an empty body this fires before TCP delivers the response headers, causing some clients to see a connection-reset instead of the 4xx/5xx status line |
+| `Horse.Provider.CrossSocket.pas` | BUG-2 | `EHorseCallbackInterrupted` caught in its own `except` branch before the generic `Exception` handler | `EHorseCallbackInterrupted` is Horse's normal pipeline-termination signal (raised by `next` when there is no further middleware); it was falling into the generic handler which logged it as an unexpected error and sent a 500 |
+| `Horse.Provider.CrossSocket.pas` | SEC-29 | Validation rejection responses (`rvBadRequest`, `rvMethodNotAllowed`) sent via `SendError` helper using `ICrossHttpResponse.SendStatus` | Ensures the error response is properly framed and the connection is closed cleanly after a rejected request |
+| `Horse.Provider.CrossSocket.pas` | SEC-30 | In-flight request counter (`FActiveRequests: Integer`) incremented on `OnRequest` entry, decremented in a `finally` block | Graceful drain (`Stop` with `DrainTimeoutMs`) now correctly waits for all requests that entered the pipeline to complete |
+| `Horse.Provider.CrossSocket.pas` | SEC-31 | Generic exception handler sends `500` without exception detail in the response body | Exception messages (stack traces, file paths, database errors) must not be forwarded to clients in production |
+| `Horse.Provider.CrossSocket.pas` | SEC-32 | `Start` raises `EInvalidOperation` if the server is already running | Prevents a second `THorse.Listen` call from silently creating a second CrossSocket server on the same or different port |
+| `samples/tests/HorseCSTestClient.dpr` | FIX-CLOSURE-1 | Replaced inline `var LIdx := I` in the test-18 loop with a nested `procedure FireOne(const AIdx: Integer; ...)` closure factory | Delphi 10.3/10.4 may hoist an inline loop variable to a single shared heap cell; all four closures captured the same `LIdx = 3`, causing three WaitFor timeouts and a false cross-contamination failure in test 18 |
 
 ---
 
