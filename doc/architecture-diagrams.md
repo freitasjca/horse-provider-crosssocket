@@ -1,5 +1,13 @@
 # Horse Transport Architecture — Indy vs CrossSocket
 
+| # | Diagram | What it explains |
+|---|---|---|
+| 1 | **Request lifecycle** | Full path from TCP accept to response for both Indy and CrossSocket — shows the pool, validation, shadow fields, and flush steps |
+| 2 | **Thread model** | Why Indy hits a wall at ~1 000 connections (N threads = N stacks) vs CrossSocket's fixed IO thread pool serving 10 000+ |
+| 3 | **Object lifecycle** | Indy: allocate + free on every request. CrossSocket: pre-warm pool at startup, `Clear()` on reuse, no allocator on the hot path |
+| 4 | **Security boundary** | All 6 validation checks in `TRequestBridge.Populate` (inbound) + CRLF-strip / hop-by-hop filter / security header injection (outbound) |
+| 5 | **Activation** | Single compiler define switches `THorseProvider` type alias — existing middleware is untouched and unaware |
+
 ---
 
 ## 1. Request lifecycle comparison
