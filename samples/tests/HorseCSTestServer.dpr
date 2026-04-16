@@ -37,42 +37,14 @@
 uses
   System.SysUtils,
   System.Classes,
-  //Horse,
-  //Horse.Commons,
+  Horse,
+  Horse.Commons,
 {$IFDEF HORSE_CROSSSOCKET}
   Horse.Provider.CrossSocket,
   Horse.Provider.CrossSocket.WorkerPool,
 {$ENDIF}
-  ThirdParty.Posix.Syslog in '..\..\..\horse\src\ThirdParty.Posix.Syslog.pas',
-  Horse.WebModule in '..\..\..\horse\src\Horse.WebModule.pas' {HorseWebModule: TWebModule},
-  Horse.Session in '..\..\..\horse\src\Horse.Session.pas',
-  Horse.Rtti in '..\..\..\horse\src\Horse.Rtti.pas',
-  Horse.Rtti.Helper in '..\..\..\horse\src\Horse.Rtti.Helper.pas',
-  Horse.Response in '..\..\..\horse\src\Horse.Response.pas',
-  Horse.Request in '..\..\..\horse\src\Horse.Request.pas',
-  Horse.Provider.VCL in '..\..\..\horse\src\Horse.Provider.VCL.pas',
-  Horse.Provider.ISAPI in '..\..\..\horse\src\Horse.Provider.ISAPI.pas',
-  Horse.Provider.IOHandleSSL in '..\..\..\horse\src\Horse.Provider.IOHandleSSL.pas',
-  Horse.Provider.IOHandleSSL.Contract in '..\..\..\horse\src\Horse.Provider.IOHandleSSL.Contract.pas',
-  Horse.Provider.FPC.LCL in '..\..\..\horse\src\Horse.Provider.FPC.LCL.pas',
-  Horse.Provider.FPC.HTTPApplication in '..\..\..\horse\src\Horse.Provider.FPC.HTTPApplication.pas',
-  Horse.Provider.FPC.FastCGI in '..\..\..\horse\src\Horse.Provider.FPC.FastCGI.pas',
-  Horse.Provider.FPC.Daemon in '..\..\..\horse\src\Horse.Provider.FPC.Daemon.pas',
-  Horse.Provider.FPC.CGI in '..\..\..\horse\src\Horse.Provider.FPC.CGI.pas',
-  Horse.Provider.FPC.Apache in '..\..\..\horse\src\Horse.Provider.FPC.Apache.pas',
-  Horse.Provider.Daemon in '..\..\..\horse\src\Horse.Provider.Daemon.pas',
-  Horse.Provider.Console in '..\..\..\horse\src\Horse.Provider.Console.pas',
-  Horse.Provider.Config in '..\..\..\horse\src\Horse.Provider.Config.pas',
-  Horse.Provider.CGI in '..\..\..\horse\src\Horse.Provider.CGI.pas',
-  Horse.Provider.Apache in '..\..\..\horse\src\Horse.Provider.Apache.pas',
-  Horse.Provider.Abstract in '..\..\..\horse\src\Horse.Provider.Abstract.pas',
-  Horse.Proc in '..\..\..\horse\src\Horse.Proc.pas',
-  Horse in '..\..\..\horse\src\Horse.pas',
-  Horse.Core.Param in '..\..\..\horse\src\Horse.Core.Param.pas',
-  Horse.Core.Param.Field in '..\..\..\horse\src\Horse.Core.Param.Field.pas',
-  Horse.Commons in '..\..\..\horse\src\Horse.Commons.pas',
-  Horse.Callback in '..\..\..\horse\src\Horse.Callback.pas',
-  Horse.Core.RouterTree in '..\..\..\horse\src\Horse.Core.RouterTree.pas';
+  Horse.Core.Param,
+  Horse.Core.Param.Field;
 
 const
   TEST_PORT           = 9010;
