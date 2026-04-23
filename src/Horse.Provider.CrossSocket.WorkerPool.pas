@@ -284,7 +284,6 @@ begin
 
     while True do
     begin
-      HasTask := False;
       FLock.Acquire;
       try
         if FShutdown and (FQueue.Count = 0) then

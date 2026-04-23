@@ -258,6 +258,10 @@
         <DCCReference Include="..\..\horse\src\Horse.WebModule.pas"/>
         <DCCReference Include="..\src\Horse.Provider.CrossSocket.WebRequestAdapter.pas"/>
         <DCCReference Include="..\src\Horse.Provider.CrossSocket.WebResponseAdapter.pas"/>
+        <DCCReference Include="..\src\Horse.Provider.CrossSocket.RawRequest.pas"/>
+        <DCCReference Include="..\src\Horse.Provider.CrossSocket.RawResponse.pas"/>
+        <DCCReference Include="..\..\horse\src\Horse.Provider.RawAdapters.pas"/>
+        <DCCReference Include="..\..\horse\src\Horse.Provider.RawInterfaces.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

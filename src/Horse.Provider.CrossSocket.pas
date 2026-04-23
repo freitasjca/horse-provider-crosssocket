@@ -165,7 +165,7 @@ type
     // ── Non-virtual convenience overloads ─────────────────────────────────
 
     // Convenience: sets THorse.Port then calls Listen.
-    class procedure Listen(APort: Integer); overload;
+    class procedure Listen(APort: Integer); reintroduce; overload;
 
     // Direct stop — called by StopListen; also available to external code.
     class procedure Stop;
