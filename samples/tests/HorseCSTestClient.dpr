@@ -34,6 +34,11 @@
     22  GET    /status/500                   → 500
     23  Content-Type of JSON response        → contains "application/json"
     24  GET    /response/large               → body length = 65536
+    25  GET    /raw/webrequest                → RawWebRequest adapter exposes
+                                                method/host/pathInfo/header/remoteAddr
+    26  OPTIONS /raw/cors                     → 204 + Access-Control-Allow-Origin
+                                                (Horse.CORS compatibility probe)
+    27  GET    /raw/cors                      → 200 body "cors-route:GET"
 *)
 
 uses
@@ -613,6 +618,52 @@ begin
   Check('body consists of ''X'' characters only',
     (Length(R.Body) > 0) and (Pos(StringOfChar('X', 8), R.Body) > 0),
     '');
+
+  // ── 25  RawWebRequest adapter probe  (PATCH-REQ-8) ───────────────────────────
+  // Verifies that Req.RawWebRequest is non-nil on the CrossSocket path and that
+  // the adapter exposes the fields middleware typically reaches for: Method,
+  // Host, PathInfo, GetFieldByName(header), RemoteAddr.
+  Section('25  GET /raw/webrequest  (RawWebRequest adapter — middleware surface)');
+  LHeaders := THttpHeader.Create;
+  try
+    LHeaders['X-Test-Header'] := 'RawAdapterProbe';
+    DoSync(AClient, 'GET', BASE_URL + '/raw/webrequest', LHeaders, nil, R);
+  finally
+    LHeaders.Free;
+  end;
+  Check('status 200',             R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('hasAdapter true',        Pos('"hasAdapter":true',   R.Body) > 0, R.Body);
+  Check('method = GET',           Pos('"method":"GET"',      R.Body) > 0, R.Body);
+  Check('host present',           Pos('"host":"127.0.0.1',   R.Body) > 0, R.Body);
+  Check('pathInfo = /raw/webrequest',
+    Pos('"pathInfo":"/raw/webrequest"', R.Body) > 0, R.Body);
+  Check('GetFieldByName echoed custom header',
+    Pos('"customHeader":"RawAdapterProbe"', R.Body) > 0, R.Body);
+  Check('RemoteAddr non-empty',
+    Pos('"remoteAddrNonEmpty":true', R.Body) > 0, R.Body);
+
+  // ── 26  OPTIONS /raw/cors  (Horse.CORS pre-flight pattern) ───────────────────
+  // This is the exact shape Horse.CORS.pas uses:
+  //   if Req.RawWebRequest.Method = 'OPTIONS' then ...
+  // Before PATCH-REQ-8 this path AV'd on CrossSocket because RawWebRequest was
+  // nil.  The test asserts that OPTIONS requests now reach the handler, the
+  // adapter reports Method='OPTIONS', and the 204 + CORS response is returned.
+  Section('26  OPTIONS /raw/cors  (Horse.CORS pre-flight shape)');
+  DoSync(AClient, 'OPTIONS', BASE_URL + '/raw/cors', nil, nil, R);
+  Check('status 204',             R.StatusCode = 204, IntToStr(R.StatusCode));
+  if Assigned(R.Response) then
+    Check('Access-Control-Allow-Origin: *',
+      R.Response.Header['Access-Control-Allow-Origin'] = '*',
+      R.Response.Header['Access-Control-Allow-Origin']);
+
+  // ── 27  GET /raw/cors  (non-OPTIONS branch of the same handler) ──────────────
+  // Confirms the same route compiled under THorse.All still dispatches correctly
+  // for non-preflight methods, and that RawWebRequest.Method returns 'GET'.
+  Section('27  GET /raw/cors  (non-preflight branch)');
+  DoSync(AClient, 'GET', BASE_URL + '/raw/cors', nil, nil, R);
+  Check('status 200',             R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('body = "cors-route:GET"',
+    R.Body = 'cors-route:GET', R.Body);
 
 end;
 

@@ -120,6 +120,7 @@ uses
   Horse.Provider.CrossSocket.Pool,
   Horse.Provider.CrossSocket.Request,
   Horse.Provider.CrossSocket.Response,
+  Horse.Provider.CrossSocket.WebResponseAdapter,
   Horse.Provider.CrossSocket.WorkerPool,
   Horse.Provider.Config;
 
@@ -319,6 +320,13 @@ begin
     try
 
       TRequestBridge.Populate(ACrossReq, Ctx.Request, RejectReason);
+
+      // PATCH-RES-6 — Create the RawWebResponse adapter so middleware that
+      // calls Res.RawWebResponse.SetCustomHeader (e.g. Horse.CORS) gets a
+      // non-nil TWebResponse backed by ICrossHttpResponse.
+      // Ownership transfers to THorseResponse; freed by Clear on pool release.
+      Ctx.Response.SetCSRawWebResponse(
+        TCrossSocketWebResponse.Create(ACrossRes));
 
       // ── Horse pipeline ────────────────────────────────────────────────────
       try
