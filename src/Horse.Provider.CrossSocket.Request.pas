@@ -101,9 +101,15 @@
 interface
 
 uses
+{$IF DEFINED(FPC)}
+  SysUtils,
+  Classes,
+  Generics.Collections,
+{$ELSE}
   System.SysUtils,
   System.Classes,
-  System.NetEncoding,
+  System.Generics.Collections,
+{$ENDIF}
   Net.CrossHttpServer,
   Net.CrossHttpParams,
   Horse.Request,
