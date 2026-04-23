@@ -130,7 +130,9 @@ contains
   Horse in '..\..\horse\src\Horse.pas',
   Horse.Proc in '..\..\horse\src\Horse.Proc.pas',
   Horse.Provider.Abstract in '..\..\horse\src\Horse.Provider.Abstract.pas',
-  Horse.WebModule in '..\..\horse\src\Horse.WebModule.pas';
+  Horse.WebModule in '..\..\horse\src\Horse.WebModule.pas',
+  Horse.Provider.CrossSocket.WebRequestAdapter in '..\src\Horse.Provider.CrossSocket.WebRequestAdapter.pas',
+  Horse.Provider.CrossSocket.WebResponseAdapter in '..\src\Horse.Provider.CrossSocket.WebResponseAdapter.pas';
 
 end.
 

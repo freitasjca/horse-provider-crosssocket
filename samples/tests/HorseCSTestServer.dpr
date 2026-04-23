@@ -32,11 +32,14 @@
     POST   /echo/body                   echoes body text + size (pool isolation tests)
     GET    /status/:code                responds with the HTTP status from the path param
     GET    /response/large              sends a fixed 65536-byte body (buffer tests)
+    GET    /raw/webrequest              echoes Req.RawWebRequest.* properties as JSON  (PATCH-REQ-8)
+    ALL    /raw/cors                    Horse.CORS-style: OPTIONS → 204 preflight, else 200
 }
 
 uses
   System.SysUtils,
   System.Classes,
+  Web.HTTPApp,
   Horse,
   Horse.Commons,
 {$IFDEF HORSE_CROSSSOCKET}
@@ -57,6 +60,12 @@ function JE(const S: string): string;
 begin
   Result := StringReplace(S,  '\', '\\', [rfReplaceAll]);
   Result := StringReplace(Result, '"', '\"', [rfReplaceAll]);
+end;
+
+{ JSON boolean literal — returned unquoted for inline Format() calls. }
+function JB(const B: Boolean): string;
+begin
+  if B then Result := 'true' else Result := 'false';
 end;
 
 // ── Route registration ────────────────────────────────────────────────────────
@@ -245,8 +254,8 @@ begin
   // ── Explicit status code ──────────────────────────────────────────────────────
   // Responds with the HTTP status code extracted from the path parameter.
   // Used to verify that non-200 codes flow through the pipeline correctly.
-  // GET /status/400 → 400 Bad Request  {"status":400}
-  // GET /status/500 → 500 Internal Server Error  {"status":500}
+  // GET /status/400 → 400 Bad Request (empty body)
+  // GET /status/500 → 500 Internal Server Error (empty body)
   THorse.Get('/status/:code',
     procedure(Req: THorseRequest; Res: THorseResponse)
     var
@@ -270,6 +279,67 @@ begin
     begin
       Res.ContentType('text/plain; charset=utf-8')
          .Send(StringOfChar('X', LARGE_RESPONSE_SIZE));
+    end
+  );
+
+  // ── RawWebRequest adapter probe  (PATCH-REQ-8) ────────────────────────────────
+  // Exercises the TWebRequest/TRequest adapter so middleware that reaches through
+  // `Req.RawWebRequest.*` (e.g. Horse.CORS) keeps working on CrossSocket.
+  // On Indy the adapter is not used — FWebRequest is returned directly.
+  // On CrossSocket the hybrid adapter exposes Method/Host/PathInfo/GetFieldByName
+  // backed by ICrossHttpRequest.
+  THorse.Get('/raw/webrequest',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LRaw: TWebRequest;
+    begin
+      LRaw := Req.RawWebRequest;
+      if not Assigned(LRaw) then
+      begin
+        Res.ContentType('application/json; charset=utf-8').Status(500)
+           .Send('{"hasAdapter":false,"error":"RawWebRequest is nil"}');
+        Exit;
+      end;
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(Format(
+           '{"hasAdapter":true,"method":"%s","host":"%s","pathInfo":"%s",'
+         + '"customHeader":"%s","remoteAddrNonEmpty":%s}',
+           [JE(LRaw.Method),
+            JE(LRaw.Host),
+            JE(LRaw.PathInfo),
+            JE(LRaw.GetFieldByName('X-Test-Header')),
+            JB(LRaw.RemoteAddr <> '')]));
+    end
+  );
+
+  // ── Horse.CORS-style route  (PATCH-REQ-8 regression) ──────────────────────────
+  // Emulates the Horse.CORS middleware pattern:
+  //   if Req.RawWebRequest.Method = 'OPTIONS' then reply 204 + CORS header,
+  //   otherwise continue and echo the method.
+  // Registered with `All` so the route matches every TMethodType including
+  // mtAny (which is how OPTIONS is represented on both Indy and CrossSocket).
+  THorse.All('/raw/cors',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LRaw: TWebRequest;
+      LMethod: string;
+    begin
+      LRaw := Req.RawWebRequest;
+      if not Assigned(LRaw) then
+      begin
+        Res.ContentType('text/plain').Status(500)
+           .Send('raw-cors:nil-adapter');
+        Exit;
+      end;
+      LMethod := LRaw.Method;
+      if SameText(LMethod, 'OPTIONS') then
+      begin
+        Res.AddHeader('Access-Control-Allow-Origin', '*');
+        Res.AddHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+        Res.ContentType('text/plain').Status(THTTPStatus.NoContent).Send('');
+        Exit;
+      end;
+      Res.ContentType('text/plain').Send('cors-route:' + LMethod);
     end
   );
 

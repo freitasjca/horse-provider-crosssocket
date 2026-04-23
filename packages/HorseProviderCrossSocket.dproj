@@ -256,6 +256,8 @@
         <DCCReference Include="..\..\horse\src\Horse.Proc.pas"/>
         <DCCReference Include="..\..\horse\src\Horse.Provider.Abstract.pas"/>
         <DCCReference Include="..\..\horse\src\Horse.WebModule.pas"/>
+        <DCCReference Include="..\src\Horse.Provider.CrossSocket.WebRequestAdapter.pas"/>
+        <DCCReference Include="..\src\Horse.Provider.CrossSocket.WebResponseAdapter.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
@@ -309,13 +311,13 @@
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
-                <DeployFile LocalName="C:\Users\Public\Documents\Embarcadero\Studio\21.0\Bpl\HorseProviderCrossSocket270.bpl" Configuration="Debug" Class="ProjectOutput"/>
-                <DeployFile LocalName="C:\Users\Public\Documents\Embarcadero\Studio\23.0\Bpl\HorseProviderCrossSocket290.bpl" Configuration="Debug" Class="ProjectOutput">
+                <DeployFile LocalName="..\..\bin\Win32\Debug\HorseProviderCrossSocket290.bpl" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Win32">
                         <RemoteName>HorseProviderCrossSocket.bpl</RemoteName>
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
+                <DeployFile LocalName="C:\Users\Public\Documents\Embarcadero\Studio\21.0\Bpl\HorseProviderCrossSocket270.bpl" Configuration="Debug" Class="ProjectOutput"/>
                 <DeployClass Name="AdditionalDebugSymbols">
                     <Platform Name="OSX32">
                         <Operation>1</Operation>

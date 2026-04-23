@@ -13,6 +13,16 @@
   These inject per-request values directly into the private shadow fields,
   bypassing the FWebRequest delegation that would crash with a nil TWebRequest.
 
+  PATCH-REQ-8 must also be applied (Horse.Request.pas + new unit
+  Horse.Provider.CrossSocket.WebRequestAdapter.pas):
+    procedure THorseRequest.SetCSRawWebRequest(...)
+    FCSRawWebRequest field + Clear/Destroy free it
+    RawWebRequest returns FCSRawWebRequest when FWebRequest is nil
+
+  Together this gives existing middleware (Horse.CORS, horse-jwt, …) a
+  non-nil RawWebRequest on the CrossSocket path — Req.RawWebRequest.Method
+  and similar calls work unchanged.
+
   ── Security fixes ──────────────────────────────────────────────────────────
   [SEC-12] HTTP Request Smuggling prevention.
            RFC 7230 §3.3.3 rule 3: if both Content-Length and
@@ -97,7 +107,12 @@ uses
   Net.CrossHttpServer,
   Net.CrossHttpParams,
   Horse.Request,
-  Horse.Commons
+  Horse.Commons,
+  { PATCH-REQ-8 — TWebRequest / TRequest adapter for middleware compatibility.
+    Req.RawWebRequest returns an instance of TCrossSocketWebRequest on the
+    CrossSocket path so that existing Horse middleware using
+    Req.RawWebRequest.Method / .Host / .GetFieldByName(...) works unchanged. }
+  Horse.Provider.CrossSocket.WebRequestAdapter
   // TMethodType and its constants (mtAny, mtGet, mtPut, mtPost, mtHead,
   // mtDelete, mtPatch) live in Web.HTTPApp on Delphi, and are declared in
   // Horse.Commons under {$IF DEFINED(FPC)} on FPC.
@@ -273,6 +288,16 @@ begin
 
   // ── Populate ContentFields from parsed body ──────────────────────────────
   PopulateContentFields(ACrossReq, AHorseReq);
+
+  // ── PATCH-REQ-8: RawWebRequest compatibility adapter ─────────────────────
+  // Build a concrete TWebRequest / TRequest subclass backed by ACrossReq and
+  // hand ownership to the THorseRequest. Middleware calling
+  //   Req.RawWebRequest.Method / .Host / .GetFieldByName(...)
+  // goes through this adapter instead of dereferencing nil FWebRequest.
+  //
+  // One adapter per request; freed by THorseRequest.Clear when the pool
+  // context is released. See Horse.Provider.CrossSocket.WebRequestAdapter.
+  AHorseReq.SetCSRawWebRequest(TCrossSocketWebRequest.Create(ACrossReq));
 
   Result := rvOK;
 end;

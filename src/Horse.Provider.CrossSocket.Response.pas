@@ -95,6 +95,7 @@ uses
   System.SysUtils,
   System.Classes,
   System.Generics.Collections,
+  Web.HTTPApp,
   Net.CrossHttpServer,
   Net.CrossHttpParams,
   Horse.Response;
@@ -192,35 +193,52 @@ class procedure TResponseBridge.CopyHeaders(
         AHorseRes:       THorseResponse;
   const ACrossRes:       ICrossHttpResponse
 );
-var
-  Pair:      TPair<string, string>;
-  SafeValue: string;
-begin
-  // CustomHeaders is the PATCH-RES-3 read-only TList<TPair<string,string>>
-  if AHorseRes.CustomHeaders = nil then Exit;
 
-  for Pair in AHorseRes.CustomHeaders do
+  procedure EmitHeader(const AName, AValue: string);
+  var
+    SafeValue: string;
   begin
     // [SEC-20] Skip hop-by-hop headers
-    if IsHopByHopHeader(Pair.Key) then Continue;
-
+    if IsHopByHopHeader(AName) then Exit;
     // [SEC-19] Reject names containing CR/LF (header name injection)
-    if (Pos(#13, Pair.Key) > 0) or (Pos(#10, Pair.Key) > 0) then Continue;
-
+    if (Pos(#13, AName) > 0) or (Pos(#10, AName) > 0) then Exit;
     // [SEC-19] Strip CRLF from value
-    SafeValue := SanitiseHeaderValue(Pair.Value);
-
+    SafeValue := SanitiseHeaderValue(AValue);
     // [MULTI-1] Set-Cookie must appear as a separate header line per cookie
     // (RFC 6265 §3 prohibits folding multiple Set-Cookie values into one line).
-    // TBaseParams.Add(name, value, ADupAllowed=True) appends a new TNameValue
-    // entry rather than updating the existing one — so each cookie gets its
-    // own header.  All other headers use the default indexer (overwrite) so
-    // that app headers can override the security defaults from
-    // ApplySecurityHeaders above.
-    if SameText(Pair.Key, 'set-cookie') then
-      ACrossRes.Header.Add(Pair.Key, SafeValue, True)
+    if SameText(AName, 'set-cookie') then
+      ACrossRes.Header.Add(AName, SafeValue, True)
     else
-      ACrossRes.Header[Pair.Key] := SafeValue;
+      ACrossRes.Header[AName] := SafeValue;
+  end;
+
+var
+  Pair:      TPair<string, string>;
+  LRawRes:   TWebResponse;
+  I:         Integer;
+  LName:     string;
+  LValue:    string;
+begin
+  // 1. Copy headers from THorseResponse.CustomHeaders (PATCH-RES-1/3)
+  //    Written by Res.AddHeader — the normal Horse API path.
+  if AHorseRes.CustomHeaders <> nil then
+    for Pair in AHorseRes.CustomHeaders do
+      EmitHeader(Pair.Key, Pair.Value);
+
+  // 2. PATCH-RES-6 — Copy headers from the RawWebResponse adapter.
+  //    Middleware that calls Res.RawWebResponse.SetCustomHeader (e.g. Horse.CORS)
+  //    writes to the adapter's inherited CustomHeaders TStrings, bypassing
+  //    THorseResponse.FCustomHeaders entirely. Merge them here.
+  LRawRes := AHorseRes.RawWebResponse;
+  if Assigned(LRawRes) and Assigned(LRawRes.CustomHeaders) then
+  begin
+    for I := 0 to LRawRes.CustomHeaders.Count - 1 do
+    begin
+      LName  := LRawRes.CustomHeaders.Names[I];
+      LValue := LRawRes.CustomHeaders.ValueFromIndex[I];
+      if LName <> '' then
+        EmitHeader(LName, LValue);
+    end;
   end;
 end;
 
