@@ -133,6 +133,10 @@ type
     // on sibling/parent classes are separate storage locations; sharing one would
     // cause silent port-not-changing bugs when both providers are compiled.
     class var FPort: Integer;
+    // Manual-reset event used to block the main thread in Listen (console apps).
+    // Created signalled=False; SetEvent is called by Stop/StopListen to unblock.
+    class var FStopEvent: TEvent;
+    class var FRunning: Boolean;
 
     class function  GetPort: Integer; static;
     class procedure SetPort(const AValue: Integer); static;
@@ -252,6 +256,27 @@ begin
 
   FServer.Start(APort);
   DoOnListen;
+
+  // Block the main thread when running as a console application so the
+  // program does not fall through to `end.` and trigger RTL finalization
+  // while IOCP threads are still alive.  Matches the Console/Indy
+  // provider's 'while FRunning do GetDefaultEvent.WaitFor' pattern.
+  //
+  // When IsConsole is False (VCL, service, LCL) the caller's own message
+  // loop or service dispatcher keeps the process alive — no blocking needed.
+  //
+  // Stop sets FRunning := False, joins all threads, THEN signals FStopEvent.
+  // The main thread wakes only after every IOCP and worker thread has exited,
+  // so finalization runs against a fully quiescent process.
+  if IsConsole then
+  begin
+    FRunning := True;
+    if not Assigned(FStopEvent) then
+      FStopEvent := TEvent.Create(nil, True, False, '');
+    while FRunning do
+      FStopEvent.WaitFor(INFINITE);
+    FreeAndNil(FStopEvent);
+  end;
 end;
 
 // ── StopListen — base override ────────────────────────────────────────────────
@@ -264,12 +289,22 @@ end;
 // ── Stop ─────────────────────────────────────────────────────────────────────
 class procedure THorseProviderCrossSocket.Stop;
 begin
+  FRunning := False;
+
   if Assigned(FServer) then
   begin
     FServer.Stop;     // [SEC-30] waits for drain before returning
     FreeAndNil(FServer);
   end;
   THorseWorkerPool.Finalize;
+
+  // Unblock the main thread (ListenWithConfig is waiting on FStopEvent)
+  if Assigned(FStopEvent) then
+  begin
+    FStopEvent.SetEvent;
+    // Do NOT free FStopEvent here — ListenWithConfig is still in its
+    // WaitFor loop and needs to see FRunning = False after the wake.
+  end;
 end;
 
 // ── ExecutePipeline ───────────────────────────────────────────────────────────

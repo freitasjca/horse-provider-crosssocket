@@ -190,7 +190,11 @@ begin
   FShutdown := True;
   FLock.Release;
 
-  FWorkEvent.SetEvent;
+  // Signal once per worker thread.  FWorkEvent is auto-reset, so each
+  // SetEvent call wakes exactly one blocked thread.  Without this, only
+  // one of N workers would wake up and WaitFor on the rest would hang.
+  for T in FThreads do
+    FWorkEvent.SetEvent;
 
   if FRunningTasks > 0 then
     FDrainEvent.WaitFor(SHUTDOWN_DRAIN_MS);
@@ -287,7 +291,13 @@ begin
       FLock.Acquire;
       try
         if FShutdown and (FQueue.Count = 0) then
+        begin
+          // Cascade: wake the next worker so all threads drain.
+          // Without this, the auto-reset event wakes only one thread
+          // and the rest hang in WaitFor → finalization deadlock.
+          FWorkEvent.SetEvent;
           Exit;
+        end;
 
         HasTask := DequeueTask(Task);
 

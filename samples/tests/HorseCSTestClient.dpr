@@ -39,6 +39,19 @@
     26  OPTIONS /raw/cors                     → 204 + Access-Control-Allow-Origin
                                                 (Horse.CORS compatibility probe)
     27  GET    /raw/cors                      → 200 body "cors-route:GET"
+    28  GET    /raw/webresponse               → 200, X-Via-RawResponse header set
+                                                via Res.RawWebResponse.SetCustomHeader
+                                                (PATCH-RES-6 regression)
+    29  POST   /pool/burst  ×8 concurrent     → all 200, unique markers, no cross-leak
+                                                (worker pool cascade wake stress test)
+    30  POST   /pool/burst  rapid sequential  → 5 requests immediately after burst;
+                                                validates pool drain/refill correctness
+    31  POST   /echo/body-twice               → body echoed identically in both "first"
+                                                and "second" fields ("equal":true)
+                                                (PATCH-REQ-9 FBodyString cache regression)
+    32  GET    /compat/rawbody                → body = "shadow-wins" despite
+                                                RawWebResponse.Content being set first
+                                                (COMPAT-1 shadow-field-wins validation)
 *)
 
 uses
@@ -55,6 +68,8 @@ const
   LARGE_RESPONSE_SIZE = 65536; // must match server constant
   LARGE_BODY_SIZE     = 65536; // bytes sent in test 16
   CONCURRENT_COUNT    = 4;     // parallel requests in test 18
+  BURST_COUNT         = 8;     // parallel requests in test 29
+  RAPID_SEQ_COUNT     = 5;     // sequential requests in test 30
 
 // ── Global counters ───────────────────────────────────────────────────────────
 
@@ -241,6 +256,15 @@ var
   LAllMarkersOk:  Boolean;
   LNoCrossLeaks:  Boolean;
   I:              Integer;
+  // Test 29 — burst batch (BURST_COUNT entries)
+  LBurstBatch:    array[0..BURST_COUNT - 1] of TConcurrentEntry;
+  LBurstAllOk:    Boolean;
+  LBurstAllMarkers: Boolean;
+  LBurstNoCross:  Boolean;
+  // Test 30 — rapid sequential
+  LSeqAllOk:      Boolean;
+  LSeqMarker:     string;
+  J:              Integer;
 
   procedure Section(const ATitle: string);
   begin
@@ -256,6 +280,24 @@ var
   // hoist LIdx to a single shared heap location, causing all four closures to
   // refer to the last-written value (3) after the loop.  A nested procedure
   // with a value parameter is the standard Delphi closure-factory workaround.
+  // ── Test 29 helper — burst closure factory (same pattern as FireOne) ───────
+  procedure FireBurst(const AIdx: Integer; AHeaders: THttpHeader);
+  begin
+    AClient.DoRequest('POST', BASE_URL + '/pool/burst',
+      AHeaders,
+      TEncoding.UTF8.GetBytes(LBurstBatch[AIdx].Marker),
+      nil, nil,
+      procedure(const AResp: ICrossHttpClientResponse)
+      begin
+        if AResp <> nil then
+        begin
+          LBurstBatch[AIdx].Status := AResp.StatusCode;
+          LBurstBatch[AIdx].Body   := StreamToStr(AResp.Content);
+        end;
+        LBurstBatch[AIdx].Event.SetEvent;
+      end);
+  end;
+
   procedure FireOne(const AIdx: Integer; AHeaders: THttpHeader);
   begin
     AClient.DoRequest('POST', BASE_URL + '/echo/body',
@@ -547,7 +589,6 @@ begin
     if Pos(LBatch[I].Marker, LBatch[I].Body) = 0 then
       LAllMarkersOk := False;
     // Each body must NOT contain any other request's marker.
-    var J: Integer;
     for J := 0 to CONCURRENT_COUNT - 1 do
       if (J <> I) and (Pos(LBatch[J].Marker, LBatch[I].Body) > 0) then
         LNoCrossLeaks := False;
@@ -664,6 +705,155 @@ begin
   Check('status 200',             R.StatusCode = 200, IntToStr(R.StatusCode));
   Check('body = "cors-route:GET"',
     R.Body = 'cors-route:GET', R.Body);
+
+  // ── 28  Res.RawWebResponse.SetCustomHeader  (PATCH-RES-6 regression) ────────
+  // This is the exact pattern Horse.CORS uses to inject headers:
+  //   Res.RawWebResponse.SetCustomHeader('Access-Control-Allow-Origin', '*');
+  // Before PATCH-RES-6, Res.RawWebResponse was nil on CrossSocket → AV crash.
+  // The fix adds FCSRawWebResponse (backed by TCrossSocketWebResponse) so the
+  // call succeeds and the header flows through TResponseBridge.Flush to the wire.
+  Section('28  GET /raw/webresponse  (Res.RawWebResponse.SetCustomHeader — PATCH-RES-6)');
+  DoSync(AClient, 'GET', BASE_URL + '/raw/webresponse', nil, nil, R);
+  Check('status 200',             R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('hasAdapter true',        Pos('"hasAdapter":true', R.Body) > 0, R.Body);
+  if Assigned(R.Response) then
+  begin
+    Check('X-Via-RawResponse header set via SetCustomHeader',
+      R.Response.Header['X-Via-RawResponse'] = 'PATCH-RES-6-OK',
+      R.Response.Header['X-Via-RawResponse']);
+    Check('X-Via-AddHeader header set via Res.AddHeader',
+      R.Response.Header['X-Via-AddHeader'] = 'AddHeader-OK',
+      R.Response.Header['X-Via-AddHeader']);
+  end
+  else
+    Check('response received', False, 'nil response');
+
+  // ── 29  Worker pool burst  (cascade wake stress test) ──────────────────────────
+  // Fires BURST_COUNT (8) concurrent POST requests simultaneously.
+  // This stresses the worker pool's cascade wake mechanism: with auto-reset
+  // events, each SetEvent wakes only one blocked thread.  The fix signals once
+  // per thread on shutdown and uses cascade wakes in WorkerLoop.  If the fix
+  // is broken, some requests will hang (timeout) because worker threads stay
+  // blocked on WaitFor(INFINITE) and never pick up queued tasks.
+  //
+  // Uses /pool/burst (separate from /echo/body) to avoid interference with
+  // sequential isolation tests.
+  Section(Format('29  POST /pool/burst  %d concurrent  (cascade wake stress)',
+    [BURST_COUNT]));
+
+  for I := 0 to BURST_COUNT - 1 do
+  begin
+    LBurstBatch[I].Marker := Format('BURST_%d_%s',
+      [I, IntToHex(I * $CAFE0001 + $B00B1E5, 8)]);
+    LBurstBatch[I].Event  := TEvent.Create(nil, True, False, '');
+    LBurstBatch[I].Status := 0;
+    LBurstBatch[I].Body   := '';
+  end;
+
+  LHeaders := THttpHeader.Create;
+  try
+    LHeaders['Content-Type'] := 'text/plain; charset=utf-8';
+    for I := 0 to BURST_COUNT - 1 do
+      FireBurst(I, LHeaders);
+  finally
+    LHeaders.Free;
+  end;
+
+  for I := 0 to BURST_COUNT - 1 do
+    LBurstBatch[I].Event.WaitFor(TIMEOUT_MS);
+
+  LBurstAllOk      := True;
+  LBurstAllMarkers := True;
+  LBurstNoCross    := True;
+  for I := 0 to BURST_COUNT - 1 do
+  begin
+    if LBurstBatch[I].Status <> 200 then
+      LBurstAllOk := False;
+    if Pos(LBurstBatch[I].Marker, LBurstBatch[I].Body) = 0 then
+      LBurstAllMarkers := False;
+    for J := 0 to BURST_COUNT - 1 do
+      if (J <> I) and (Pos(LBurstBatch[J].Marker, LBurstBatch[I].Body) > 0) then
+        LBurstNoCross := False;
+    LBurstBatch[I].Event.Free;
+  end;
+  Check(Format('all %d responses: status 200', [BURST_COUNT]),
+    LBurstAllOk, '');
+  Check('each response contains its own marker',
+    LBurstAllMarkers, '');
+  Check('no cross-contamination between burst responses',
+    LBurstNoCross, '');
+
+  // ── 30  Rapid sequential after burst  (pool drain/refill) ─────────────────────
+  // Immediately after the burst (test 29), fires RAPID_SEQ_COUNT sequential
+  // requests.  This validates:
+  //   (a) Worker threads that just finished the burst are still alive and
+  //       correctly re-blocking on FWorkEvent.WaitFor — not stuck in a
+  //       shutdown-exit path.
+  //   (b) Pool contexts are properly released back (THorseContextPool.Release)
+  //       after the burst, so sequential requests get clean contexts.
+  //   (c) No FDrainEvent/FWorkEvent signalling race between the burst
+  //       completion and new task submission.
+  Section(Format('30  POST /pool/burst  %d rapid sequential after burst  (drain/refill)',
+    [RAPID_SEQ_COUNT]));
+
+  LSeqAllOk := True;
+  for I := 0 to RAPID_SEQ_COUNT - 1 do
+  begin
+    LSeqMarker := Format('RAPID_SEQ_%d', [I]);
+    LHeaders := THttpHeader.Create;
+    try
+      LHeaders['Content-Type'] := 'text/plain; charset=utf-8';
+      DoSync(AClient, 'POST', BASE_URL + '/pool/burst',
+             LHeaders, TEncoding.UTF8.GetBytes(LSeqMarker), R);
+    finally
+      LHeaders.Free;
+    end;
+    if (R.StatusCode <> 200) or (Pos(LSeqMarker, R.Body) = 0) then
+      LSeqAllOk := False;
+  end;
+  Check(Format('all %d sequential requests: 200 + correct marker', [RAPID_SEQ_COUNT]),
+    LSeqAllOk, '');
+
+  // ── 31  PATCH-REQ-9: Req.Body double-read idempotency ────────────────────────
+  // Before PATCH-REQ-9, calling Req.Body a second time re-read an already-
+  // exhausted TMemoryStream and returned an empty string.  After PATCH-REQ-9,
+  // MapBody decodes the stream to FBodyString once; subsequent Body calls return
+  // the cached string.  The route calls Req.Body twice and echoes both values
+  // alongside an "equal" flag that must be true.
+  Section('31  POST /echo/body-twice  (PATCH-REQ-9 double-read cache)');
+  LHeaders := THttpHeader.Create;
+  try
+    LHeaders['Content-Type'] := 'text/plain; charset=utf-8';
+    DoSync(AClient, 'POST', BASE_URL + '/echo/body-twice',
+           LHeaders, TEncoding.UTF8.GetBytes('DOUBLE_READ_MARKER'), R);
+  finally
+    LHeaders.Free;
+  end;
+  Check('status 200',
+    R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('"first" contains posted value',
+    Pos('"first":"DOUBLE_READ_MARKER"', R.Body) > 0, R.Body);
+  Check('"second" contains posted value',
+    Pos('"second":"DOUBLE_READ_MARKER"', R.Body) > 0, R.Body);
+  Check('"equal":true — both reads returned the same string',
+    Pos('"equal":true', R.Body) > 0, R.Body);
+
+  // ── 32  COMPAT-1: shadow field takes precedence over RawWebResponse.Content ───
+  // The route writes 'raw-should-not-appear' to Res.RawWebResponse.Content
+  // (a stub on CrossSocket — value is not stored), then calls Res.Send via the
+  // Horse shadow-field API.  The bridge must return the shadow-field value.
+  // This verifies:
+  //   (a) Shadow field wins over RawWebResponse.Content when both are set.
+  //   (b) COMPAT-1 check does not spuriously fire (GetContent stub returns '').
+  //   (c) No crash or response corruption from the mixed write pattern.
+  Section('32  GET /compat/rawbody  (COMPAT-1: shadow field wins over RawWebResponse.Content)');
+  DoSync(AClient, 'GET', BASE_URL + '/compat/rawbody', nil, nil, R);
+  Check('status 200',
+    R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('body = "shadow-wins"',
+    R.Body = 'shadow-wins', R.Body);
+  Check('RawWebResponse stub value NOT present in body',
+    Pos('raw-should-not-appear', R.Body) = 0, R.Body);
 
 end;
 

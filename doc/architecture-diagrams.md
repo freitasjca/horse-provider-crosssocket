@@ -7,6 +7,7 @@
 | 3 | **Object lifecycle** | Indy: allocate + free on every request. CrossSocket: pre-warm pool at startup, `Clear()` on reuse, no allocator on the hot path |
 | 4 | **Security boundary** | All 6 validation checks in `TRequestBridge.Populate` (inbound) + CRLF-strip / hop-by-hop filter / security header injection (outbound) |
 | 5 | **Activation** | Single compiler define switches `THorseProvider` type alias — existing middleware is untouched and unaware |
+| 6 | **Hybrid interface architecture** | How IHorseRawRequest/IHorseRawResponse decouple provider-specific code from TWebRequest/TWebResponse stubs — new providers implement ~15 methods instead of 30+ |
 
 ---
 
@@ -176,3 +177,46 @@ flowchart TD
     DEFINE -->|No| NO
     DEFINE -->|Yes| YES
 ```
+
+---
+
+## 6. Hybrid interface architecture — provider abstraction
+
+```mermaid
+flowchart TD
+    subgraph HORSE["Horse-level units  (reusable by any provider)"]
+        direction TB
+        IRAW["IHorseRawRequest\n────────────────────\n~15 methods:\nGetMethod, GetHost, GetPathInfo,\nGetContent, GetFieldByName,\nPopulateQueryFields, ReadBody, ...\n────────────────────\nIHorseRawResponse\n~1 method:\nSetCustomHeader"]
+        ADAPT["TInterfacedWebRequest\n(subclasses TWebRequest / TRequest)\n────────────────────\nDelegates ALL 30+ abstract stubs\nto IHorseRawRequest methods\n────────────────────\nTInterfacedWebResponse\n(subclasses TWebResponse / TResponse)\nDelegates stubs to IHorseRawResponse\nSetCustomHeader inherited — works as-is"]
+        IRAW -->|"implements"| ADAPT
+    end
+
+    subgraph CS["CrossSocket provider"]
+        direction TB
+        CSRAW["TCrossSocketRawRequest\nimplements IHorseRawRequest\n────────────────────\n~15 one-liner wrappers:\nFCrossReq.Method\nFCrossReq.HostName\nFCrossReq.Header[Name]\n...\n────────────────────\nTCrossSocketRawResponse\nimplements IHorseRawResponse"]
+        CSADAPT["TCrossSocketWebRequest\n= TInterfacedWebRequest subclass\n(thin constructor only)\n────────────────────\nTCrossSocketWebResponse\n= TInterfacedWebResponse subclass\n(thin constructor only)"]
+        CSRAW --> CSADAPT
+    end
+
+    subgraph FUTURE["Future provider  (e.g. nghttp2, libuv)"]
+        direction TB
+        FRAW["TNghttp2RawRequest\nimplements IHorseRawRequest\n~15 one-liner wrappers\n────────────────────\nTNghttp2RawResponse\nimplements IHorseRawResponse"]
+        FADAPT["TInterfacedWebRequest.Create(\n  TNghttp2RawRequest.Create(ANgReq))\n────────────────────\nNo 30+ stubs to duplicate\nFull TWebRequest compat for free"]
+        FRAW --> FADAPT
+    end
+
+    subgraph MW["Middleware  (unchanged)"]
+        direction TB
+        CORS["Horse.CORS\nRes.RawWebResponse.SetCustomHeader\nReq.RawWebRequest.Method"]
+        OTHER["Horse.JWT · Horse.Logger · ...\nReq.Body · Req.Headers · Res.Send"]
+    end
+
+    CSADAPT -->|"RawWebRequest\nreturns TWebRequest"| CORS
+    FADAPT -->|"RawWebRequest\nreturns TWebRequest"| CORS
+    CSADAPT --> OTHER
+    FADAPT --> OTHER
+```
+
+**Key benefit:** A new provider implements `IHorseRawRequest` (~15 methods) + `IHorseRawResponse` (~1 method) and wraps them in `TInterfacedWebRequest` / `TInterfacedWebResponse`. All 30+ `TWebRequest` / `TWebResponse` abstract stubs are handled by the generic adapter — no duplication.
+
+**Compiler-version guard:** `GetIntegerVariable` / `SetIntegerVariable` return `Int64` on Delphi 10.2+ and `Integer` on XE7 / FPC. Controlled by `{$IF CompilerVersion >= 32.0}` in both interface and adapter units.

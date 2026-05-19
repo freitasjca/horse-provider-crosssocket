@@ -1,6 +1,6 @@
 # Additive changes to Horse — CrossSocket high-performance transport provider
 
-> This provider and the accompanying Horse patches are covered by an automated integration test suite (24 tests) that exercises all HTTP methods, routing, cookies, body handling, concurrent-request pool isolation, error paths, and large responses. All 24 tests pass. A stable tag has been issued on the provider repository. We welcome any review comments on scope, style, or implementation approach.
+> This provider and the accompanying Horse patches are covered by an automated integration test suite (27 tests) that exercises all HTTP methods, routing, cookies, body handling, concurrent-request pool isolation, error paths, large responses, RawWebRequest adapter verification, and CORS middleware compatibility. All 27 tests pass. A stable tag has been issued on the provider repository. We welcome any review comments on scope, style, or implementation approach.
 
 ---
 
@@ -14,7 +14,7 @@ We have developed [`horse-provider-crosssocket`](https://github.com/freitasjca/h
 - **Security hardening** at the transport boundary: request smuggling protection, enforced size limits, read timeouts, CRLF injection prevention, hop-by-hop header filtering, and clickjacking/MIME-sniffing defences on every response
 - **Zero-allocation hot path** via a pre-warmed context pool
 
-**Critically: this requires only five additive patches to Horse itself.** No existing API is renamed, removed, or changed. Every existing Horse project, provider, and official middleware continues to compile and run without any modification. The entire feature is opt-in via a single compiler define.
+**Critically: this requires only five patches to Horse itself.** No existing method is removed, renamed, or given a different signature. Existing accessor methods in `THorseRequest` and `THorseResponse` gain nil-guard branches so they work correctly when `FWebRequest`/`FWebResponse` are nil (the CrossSocket path), but the Indy code path within each modified method is unchanged. Every existing Horse project, provider, and official middleware continues to compile and run without any modification. The entire feature is opt-in via a single compiler define.
 
 ---
 
@@ -138,17 +138,19 @@ end;
 
 The Indy path is always the `else` branch, executed when `FWebRequest` is assigned. This preserves **100% of the original Indy behaviour** for every existing user and middleware.
 
-**Why shadow fields rather than an abstract interface:** An `IHorseWebRequest` interface would require changing every existing middleware and every caller of `THorseRequest` — thousands of lines across dozens of community packages. Shadow fields are an invisible implementation detail. Every middleware written before this patch continues to call the same API and gets the same result. The cost is a small number of extra fields per request object (negligible) and one branch per accessor (correctly predicted by the CPU branch predictor, because it saturates on the Indy path for Indy users and on the CrossSocket path for CrossSocket users).
+**Why shadow fields rather than replacing the public API:** An `IHorseWebRequest` interface replacing `THorseRequest` would require changing every existing middleware and every caller — thousands of lines across dozens of community packages. Shadow fields are an invisible implementation detail. Every middleware written before this patch continues to call the same API and gets the same result. The cost is a small number of extra fields per request object (negligible) and one branch per accessor (correctly predicted by the CPU branch predictor, because it saturates on the Indy path for Indy users and on the CrossSocket path for CrossSocket users).
+
+**Note on RawWebRequest/RawWebResponse:** While shadow fields handle the `THorseRequest`/`THorseResponse` API, some middleware (Horse.CORS) calls `Req.RawWebRequest`/`Res.RawWebResponse` directly. These are handled by the hybrid interface architecture (Strategy 8) — lightweight adapter objects that subclass `TWebRequest`/`TWebResponse` via a shared generic base, keeping the public return types unchanged.
 
 **Why nil-guard rather than a strategy object:** A strategy object (vtable stored in the request) would add a pointer indirection on every property access and require a different object layout. Nil-guard branches add no layout change and no indirection.
 
-### Strategy 3 — Strictly additive changes only
+### Strategy 3 — No signature changes; nil-guard modifications to existing methods
 
-With one carefully justified exception (see `Horse.Core.RouterTree.pas` below), every change to Horse is an addition. Nothing existing is renamed, removed, or given a different signature. This means:
+No existing method is removed, renamed, or given a different signature. However, the changes are **not purely additive**: existing accessor methods in `THorseRequest` (`Body`, `Host`, `MethodType`, `PathInfo`, `ContentType`, `InitializeQuery`, `InitializeCookie`, `InitializeContentFields`, `GetHeaders`) and `THorseResponse` (`Send`, `Status`, `ContentType`, `AddHeader`, `RemoveHeader`, `RedirectTo`, `SendFile`, `Download`) gain nil-guard branches that check whether `FWebRequest`/`FWebResponse` is assigned. The Indy code path within each modified method is unchanged — the new branch executes only when `FWebRequest`/`FWebResponse` is nil (the CrossSocket path). This means:
 
-- Existing Indy users can apply the patches and get no behaviour change at all (without the define).
+- Existing Indy users can apply the patches and get no behaviour change at all (without the define, and even with the define absent the nil-guards are dead code on the Indy path).
 - Community middlewares do not need modification, recompilation, or awareness of CrossSocket.
-- The changes can be reviewed purely as additions — there is no "before vs. after" diff to worry about for existing functionality.
+- The changes can be reviewed by examining the nil-guard additions in each accessor — the "else" branch (Indy path) is identical to the original.
 
 ### Strategy 4 — Bypass the Web Module; drive the pipeline directly
 
@@ -159,7 +161,7 @@ TIdHTTPWebBrokerBridge → WebRequestHandler → THorseWebModule
   → THorseRequest.Create(TWebRequest) → Routes.Execute
 ```
 
-`THorseWebModule` is the Indy broker integration layer. On CrossSocket there is no broker and no `TWebRequest`. Rather than writing a fake `TWebRequest` adapter (which would require implementing 30+ properties and methods tightly coupled to Indy's HTTP parsing), the CrossSocket provider bypasses the broker stack entirely and drives the Horse pipeline through the new `THorseProviderAbstract.Execute` method:
+`THorseWebModule` is the Indy broker integration layer. On CrossSocket there is no broker and no native `TWebRequest`. The CrossSocket provider bypasses the broker stack entirely and drives the Horse pipeline through the new `THorseProviderAbstract.Execute` method:
 
 ```
 ICrossHttpRequest (CrossSocket)
@@ -169,6 +171,8 @@ ICrossHttpRequest (CrossSocket)
 ```
 
 `THorse.Execute` is the new entry point added to `THorseProviderAbstract`. It calls `Routes.Execute(Request, Response)` — the same route dispatch that the web module calls on the Indy path. This is the minimal expression of "run the pipeline" and the only new entry point added to the abstract base.
+
+However, some middleware (notably Horse.CORS) accesses `Req.RawWebRequest` and `Res.RawWebResponse` directly — bypassing `THorseRequest`/`THorseResponse`. To support this, the provider creates lightweight `TWebRequest`/`TWebResponse` adapter objects backed by `ICrossHttpRequest`/`ICrossHttpResponse`. These adapters use a **hybrid interface architecture** (see Strategy 8 below) that minimises boilerplate for future providers.
 
 ### Strategy 5 — Security at the bridge boundary, not in middleware
 
@@ -216,6 +220,31 @@ Every file in the `patches/horse/src/` set must compile under both `dcc64` (Delp
 - No `System.Threading` in shared files
 - The `{$DEFINE HORSE_CROSSSOCKET}` guard is applied surgically — only around additions that require CrossSocket-specific types; without the define the files compile identically to upstream on both compilers
 
+### Strategy 8 — Hybrid interface architecture for provider extensibility
+
+Middleware like Horse.CORS calls `Req.RawWebRequest.Method` and `Res.RawWebResponse.SetCustomHeader` directly, requiring real `TWebRequest`/`TWebResponse` objects. On CrossSocket, these must be adapter objects backed by `ICrossHttpRequest`/`ICrossHttpResponse`.
+
+The naive approach — directly subclassing `TWebRequest` and stubbing 30+ abstract methods — works but scales poorly: every new provider must duplicate all those stubs. The hybrid architecture solves this with three layers:
+
+```
+Layer 1:  IHorseRawRequest / IHorseRawResponse         (Horse.Provider.RawInterfaces)
+             ~15 / ~1 methods — the actual surface middleware uses
+
+Layer 2:  TInterfacedWebRequest / TInterfacedWebResponse (Horse.Provider.RawAdapters)
+             generic TWebRequest/TWebResponse subclasses
+             delegate ALL abstract stubs to the interface
+
+Layer 3:  TCrossSocketWebRequest / TCrossSocketWebResponse (provider-specific)
+             thin subclass with a factory constructor:
+             inherited Create(TCrossSocketRawRequest.Create(ACrossReq))
+```
+
+**New providers** implement `IHorseRawRequest` (~15 one-liner methods wrapping their native request object) and `IHorseRawResponse` (~1 method), then wrap them in `TInterfacedWebRequest`/`TInterfacedWebResponse`. All 30+ `TWebRequest`/`TWebResponse` stubs are handled by the generic adapter — zero duplication.
+
+**Backward compatibility** is preserved: `THorseRequest.RawWebRequest` still returns `TWebRequest`, `THorseResponse.RawWebResponse` still returns `TWebResponse`. Horse.CORS and all existing middleware work unchanged.
+
+**Compiler-version guard:** `TWebRequest.GetIntegerVariable` / `TWebResponse.SetIntegerVariable` changed from `Integer` to `Int64` in Delphi 10.2 Tokyo. The interface and adapter units use `{$IF CompilerVersion >= 32.0}` to select the correct signature, making them compilable from Delphi XE7 through 12 Athens and on FPC.
+
 ---
 
 ## Files changed in Horse — detailed technical rationale
@@ -246,7 +275,7 @@ The `THorseProvider` type alias is extended by the same guard. Application code 
 
 ### `Horse.Request.pas` — parameterless constructor, Clear, Populate, shadow fields, nil-guards
 
-**Change type:** Modified (strictly additive — no existing method changed)  
+**Change type:** Modified (new members added; existing accessors gain nil-guard branches — Indy path unchanged)  
 **Patch identifiers:** PATCH-REQ-1 through PATCH-REQ-5
 
 #### PATCH-REQ-1: Parameterless constructor
@@ -338,7 +367,7 @@ The router then calls `ARequest.RawPathInfo` instead of going through `RawWebReq
 
 ### `Horse.Response.pas` — shadow fields, FCustomHeaders, Clear, nil-guards, bridge properties
 
-**Change type:** Modified (strictly additive)  
+**Change type:** Modified (new members added; existing setters/accessors gain nil-guard branches — Indy path unchanged)  
 **Patch identifiers:** PATCH-RES-1 through PATCH-RES-4
 
 #### PATCH-RES-1: `FCustomHeaders` and the `AddHeader` dual-write
@@ -442,7 +471,7 @@ The old code and the new code are semantically identical on the Indy path. The n
 
 ### `Horse.Provider.Abstract.pas` — `ListenWithConfig`, `Execute` virtual methods
 
-**Change type:** Modified (strictly additive)  
+**Change type:** Modified (new virtual methods added only)  
 **Patch identifiers:** PATCH-ABS-1, PATCH-ABS-2, PATCH-ABS-3
 
 #### PATCH-ABS-1: `uses Horse.Provider.Config`
@@ -537,7 +566,7 @@ type
 
 ### `Horse.Provider.Console.pas`, `Horse.Provider.Daemon.pas`, `Horse.Provider.VCL.pas`, `Horse.Provider.FPC.*.pas` — `ListenWithConfig` overrides
 
-**Change type:** Modified (strictly additive — new override only)
+**Change type:** Modified (new override added only)
 
 Each concrete provider gets a `ListenWithConfig` override that honours the `APort` argument:
 
@@ -732,7 +761,7 @@ To inspect any individual change: `diff patches/horse/src/<file>.pas horse/src/<
 
 ## Testing and verification status
 
-The provider ships with an automated integration test suite of 24 tests across two standalone console programs (`HorseCSTestServer.dpr` / `HorseCSTestClient.dpr`). All 24 tests pass on Delphi 12 Athens, Win64 Release.
+The provider ships with an automated integration test suite of 27 tests across two standalone console programs (`HorseCSTestServer.dpr` / `HorseCSTestClient.dpr`). All 27 tests pass on Delphi 12 Athens, Win64 Release.
 
 **Covered by the automated suite:**
 - HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD
@@ -746,6 +775,8 @@ The provider ships with an automated integration test suite of 24 tests across t
   - Test 16 — 64 KB POST body (large body stream read without truncation)
   - Test 17 — sequential pool `Reset` isolation (request A → `/ping` → request B, no body leakage)
   - Test 18 — 4 concurrent POST requests with unique body markers (parallel pool context isolation — a broken pool will either crash the server or mix body content across responses)
+- **RawWebRequest adapter (PATCH-REQ-8):** verifies method, host, pathInfo, headers, remoteAddr via `Req.RawWebRequest`
+- **CORS compatibility:** `OPTIONS` preflight returns 204 + `Access-Control-Allow-Origin`; `GET` returns route body (Horse.CORS integration)
 
 **Test 18 implementation note — closure factory pattern:**  
 The four `DoRequest` callbacks are dispatched via a nested `FireOne(AIdx, AHeaders)` helper rather than inline `var LIdx := I` variables inside the loop body. Delphi 10.3/10.4 may hoist an inline loop variable to a single shared heap location, causing all four closures to see the last-written value after the loop exits. The nested procedure creates a fresh stack frame per call, guaranteeing each closure captures an independent `AIdx`.
@@ -780,8 +811,8 @@ The ideal long-term outcome is for the original Delphi-Cross-Socket repository t
 | File | Change type | What was added | What was changed |
 |---|---|---|---|
 | `Horse.pas` | Modified | `HORSE_CROSSSOCKET` conditional branch | — |
-| `Horse.Request.pas` | Modified | `Create` (no-arg), `Clear`, `Populate`, `PopulateCookiesFromHeader`, `RawPathInfo`, shadow fields, nil-guards on `Body`/`Host`/`InitializeQuery` | — |
-| `Horse.Response.pas` | Modified | `Clear`, shadow fields, `FCustomHeaders`, `CustomHeaders`/`BodyText`/`ContentStream`/`CSContentType` properties, nil-guards on all setters | — |
+| `Horse.Request.pas` | Modified | `Create` (no-arg), `Clear`, `Populate`, `PopulateCookiesFromHeader`, `RawPathInfo`, `SetCSRawWebRequest`, shadow fields | Nil-guards added to `Body`, `Host`, `MethodType`, `PathInfo`, `ContentType`, `InitializeQuery`, `InitializeCookie`, `InitializeContentFields`, `GetHeaders` (Indy code path unchanged in each) |
+| `Horse.Response.pas` | Modified | `Clear`, `SetCSRawWebResponse`, shadow fields, `FCustomHeaders`, `CustomHeaders`/`BodyText`/`ContentStream`/`CSContentType` properties | Nil-guards added to `Send`, `Status` (both overloads), `ContentType`, `AddHeader`, `RemoveHeader`, `RedirectTo` (both overloads), `SendFile`, `Download` (Indy code path unchanged in each) |
 | `Horse.Core.RouterTree.pas` | Modified | — | `Execute` calls `ARequest.RawPathInfo` + `ARequest.MethodType` instead of `RawWebRequest.RawPathInfo` + `RawWebRequest.MethodType` (semantically equivalent on Indy; fixes crash on CrossSocket) |
 | `Horse.Provider.Abstract.pas` | Modified | `ListenWithConfig`, `Execute`; `uses Horse.Provider.Config` | — |
 | `Horse.Provider.Config.pas` | **New file** | `THorseCrossSocketConfig` record with `Default` factory | — |
@@ -792,8 +823,10 @@ The ideal long-term outcome is for the original Delphi-Cross-Socket repository t
 | `Horse.Provider.FPC.Daemon.pas` | Modified | `ListenWithConfig` override | — |
 | `Horse.Provider.FPC.FastCGI.pas` | Modified | `ListenWithConfig` override | — |
 | `Horse.Provider.FPC.LCL.pas` | Modified | `ListenWithConfig` override | — |
+| `Horse.Provider.RawInterfaces.pas` | **New file** | `IHorseRawRequest` (~15 methods) + `IHorseRawResponse` (~1 method) interfaces | — |
+| `Horse.Provider.RawAdapters.pas` | **New file** | `TInterfacedWebRequest` / `TInterfacedWebResponse` generic adapters delegating to `IHorseRaw*` | — |
 
-**Net change to Horse source:** approximately 350 lines added across 13 files; 2 lines changed (the `RawWebRequest` → `RawPathInfo`/`MethodType` substitution in `Horse.Core.RouterTree.pas`).
+**Net change to Horse source:** approximately 600 lines added across 15 files; nil-guard branches added to ~20 existing accessor/setter methods in `Horse.Request.pas` and `Horse.Response.pas`; 2 lines substituted in `Horse.Core.RouterTree.pas` (`RawWebRequest` → `RawPathInfo`/`MethodType`).
 
 ---
 
@@ -809,6 +842,10 @@ The ideal long-term outcome is for the original Delphi-Cross-Socket repository t
 | `Horse.Provider.CrossSocket.pas` | SEC-30 | In-flight request counter (`FActiveRequests: Integer`) incremented on `OnRequest` entry, decremented in a `finally` block | Graceful drain (`Stop` with `DrainTimeoutMs`) now correctly waits for all requests that entered the pipeline to complete |
 | `Horse.Provider.CrossSocket.pas` | SEC-31 | Generic exception handler sends `500` without exception detail in the response body | Exception messages (stack traces, file paths, database errors) must not be forwarded to clients in production |
 | `Horse.Provider.CrossSocket.pas` | SEC-32 | `Start` raises `EInvalidOperation` if the server is already running | Prevents a second `THorse.Listen` call from silently creating a second CrossSocket server on the same or different port |
+| `Horse.Provider.CrossSocket.WebRequestAdapter.pas` | PATCH-REQ-8 | Refactored to delegate to `TInterfacedWebRequest` via `IHorseRawRequest` | Eliminates 30+ duplicated abstract method stubs; backward-compatible `TCrossSocketWebRequest.Create(ACrossReq)` constructor preserved |
+| `Horse.Provider.CrossSocket.WebResponseAdapter.pas` | PATCH-RES-6 | Refactored to delegate to `TInterfacedWebResponse` via `IHorseRawResponse` | Same pattern as request side; `SetCustomHeader` works via inherited `TWebResponse.CustomHeaders` TStrings |
+| `Horse.Provider.CrossSocket.RawRequest.pas` | NEW | `TCrossSocketRawRequest` implements `IHorseRawRequest` wrapping `ICrossHttpRequest` in ~15 one-liner methods | Provider-specific request logic separated from generic TWebRequest boilerplate |
+| `Horse.Provider.CrossSocket.RawResponse.pas` | NEW | `TCrossSocketRawResponse` implements `IHorseRawResponse` wrapping `ICrossHttpResponse` | Provider-specific response logic separated from generic TWebResponse boilerplate |
 | `samples/tests/HorseCSTestClient.dpr` | FIX-CLOSURE-1 | Replaced inline `var LIdx := I` in the test-18 loop with a nested `procedure FireOne(const AIdx: Integer; ...)` closure factory | Delphi 10.3/10.4 may hoist an inline loop variable to a single shared heap cell; all four closures captured the same `LIdx = 3`, causing three WaitFor timeouts and a false cross-contamination failure in test 18 |
 
 ---
