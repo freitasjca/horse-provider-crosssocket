@@ -1,6 +1,6 @@
 ## Additive changes to support CrossSocket high‑performance provider
 
-> This provider and the accompanying Horse patches are covered by an automated integration test suite (32 tests) covering all HTTP methods, routing, cookies, body handling, concurrent-request pool isolation, error paths, large responses, RawWebRequest adapter verification, CORS middleware compatibility, body double-read idempotency (PATCH-REQ-9), and response bridge shadow-field precedence (COMPAT-1). All 32 tests pass. A stable tag has been issued on the provider repository. We welcome any comments on scope, style, or alternative approaches.
+> This provider and the accompanying Horse patches are covered by an automated integration test suite (27 tests) covering all HTTP methods, routing, cookies, body handling, concurrent-request pool isolation, error paths, large responses, RawWebRequest adapter verification, and CORS middleware compatibility. All 27 tests pass. A stable tag has been issued on the provider repository. We welcome any comments on scope, style, or alternative approaches.
 
 ---
 
@@ -8,7 +8,7 @@
 
 We have developed a new provider for Horse, [horse-provider-crosssocket](https://github.com/freitasjca/horse-provider-crosssocket), that replaces the Indy transport layer with [Delphi‑Cross‑Socket](https://github.com/winddriver/Delphi-Cross-Socket). This brings **IOCP/epoll async I/O**, **security hardening** (request smuggling protection, enforced size limits, read timeouts, object pooling, CRLF-stripping on response headers) and **full Linux 64‑bit support** including Docker deployment.
 
-The provider requires patches to Horse itself. **Seventeen existing methods across `THorseRequest` and `THorseResponse` are modified**: each gains a `{$IF DEFINED(HORSE_CROSSSOCKET)}` nil-guard branch that handles the CrossSocket path (where `FWebRequest`/`FWebResponse` are always nil). No existing method is removed, renamed, or given a different signature, and the Indy code path inside each method is unchanged. The full list of modified methods is in the summary table below. **All existing Horse projects, providers, and official middlewares continue to compile and run without any changes**.
+The provider requires patches to Horse itself. No existing method is removed, renamed, or given a different signature. Existing accessor methods in `THorseRequest` and `THorseResponse` gain nil-guard branches so they work correctly when `FWebRequest`/`FWebResponse` are nil (the CrossSocket path), but the Indy code path within each method is unchanged. **All existing Horse projects, providers, and official middlewares continue to compile and run without any changes**.
 
 ---
 
@@ -143,21 +143,29 @@ These two models are mutually exclusive at the OS level:
 | `TWebRequest` available | Never — socket buffer only | Always — host has already parsed headers |
 | `TCrossHttpServer.Start()` | Meaningful — binds the port | Meaningless — there is no port to bind |
 
-#### Compile-time guard against incompatible define combinations (PATCH-HORSE-1)
+#### Why a compile-time error would be better than silent wrong behaviour
 
-The patched `Horse.pas` (PATCH-HORSE-1) adds `{$MESSAGE FATAL}` guards that fire a hard compile error whenever `HORSE_CROSSSOCKET` is combined with any define that would silently take precedence over it:
+The current `Horse.pas` conditional chain checks `HORSE_ISAPI`, `HORSE_APACHE`, `HORSE_CGI`, and `HORSE_FCGI` **before** `HORSE_CROSSSOCKET` in the `THorseProvider` type alias block. If a developer accidentally sets both `HORSE_CROSSSOCKET` and `HORSE_ISAPI`, the ISAPI provider silently wins: `THorse` inherits from `THorseProvider.ISAPI`, the CrossSocket unit is compiled but its `THorseProviderCrossSocket` class is never used, and `THorse.Listen` has no effect. The server appears to compile and link successfully but never actually listens on any port.
+
+We therefore propose that a future commit adds an explicit compile-time guard to catch this misconfiguration immediately:
 
 ```pascal
-{$IF DEFINED(HORSE_CROSSSOCKET)}
-  {$IF DEFINED(HORSE_ISAPI)}
-    {$MESSAGE FATAL 'HORSE_CROSSSOCKET is incompatible with HORSE_ISAPI — remove one define. ...'}
-  {$ENDIF}
-  // ... repeated for HORSE_APACHE, HORSE_CGI, HORSE_FCGI,
-  //     HORSE_DAEMON, HORSE_LCL, HORSE_VCL, HORSE_NOPROVIDER
+// Proposed addition to Horse.pas — catches the impossible combination
+// at compile time with a clear error message instead of silent wrong
+// behaviour at runtime.
+{$IF DEFINED(HORSE_CROSSSOCKET) AND
+    (DEFINED(HORSE_ISAPI) OR DEFINED(HORSE_APACHE) OR
+     DEFINED(HORSE_CGI)  OR DEFINED(HORSE_FCGI))}
+  {$MESSAGE FATAL 'HORSE_CROSSSOCKET cannot be combined with HORSE_ISAPI, ' +
+                  'HORSE_APACHE, HORSE_CGI, or HORSE_FCGI. CrossSocket owns ' +
+                  'the listening socket directly; these providers require the ' +
+                  'host process (IIS/Apache/CGI caller) to own it. ' +
+                  'Remove all other provider defines and keep only ' +
+                  'HORSE_CROSSSOCKET.'}
 {$ENDIF}
 ```
 
-Each message names both conflicting defines and explains the architectural reason. The guard block is inside `{$IF DEFINED(HORSE_CROSSSOCKET)}` so it compiles away entirely for Indy projects. Without this guard, a misconfigured project compiles cleanly but runs the wrong provider with no diagnostic.
+This guard is **not included in the current PR** to keep the patch minimal and focused, but we consider it a worthwhile follow-up and would be happy to add it if the maintainers agree.
 
 #### What CrossSocket replaces vs. what it cannot replace
 
@@ -236,10 +244,9 @@ All modifications are in separate commits and are fully backward‑compatible. D
 
 #### 3. `Horse.Provider.Abstract.pas`
 
-- **`ListenWithConfig` virtual class method** – a new virtual method that accepts a `THorseCrossSocketConfig` record (timeouts, size limits, SSL/mTLS settings, IO thread count, etc.). The base implementation raises an exception so that any concrete provider which forgets to override it is caught immediately at runtime rather than silently using the wrong port. All existing concrete providers (Console, VCL, Daemon, FPC.*) already override `ListenWithConfig` and call `SetPort(APort)` before their own `Listen` — they are completely unaffected.
+- **`ListenWithConfig` virtual class method** – a new virtual method that accepts a `THorseCrossSocketConfig` record (timeouts, size limits, SSL/mTLS settings, IO thread count, etc.). The base implementation simply calls the existing `Listen` overload, so **all existing providers are completely unaffected**.
 - **`Execute` virtual class method** – runs the Horse middleware + route pipeline for a given `THorseRequest` / `THorseResponse` pair, allowing providers that bypass `TWebRequest` to invoke the full Horse pipeline. The base implementation calls `Routes.Execute(ARequest, AResponse)`.
-
-No `Port` class property is added to the abstract base. The submitted file contains a code comment explaining why: in Delphi, `class var` in a subclass is a completely independent memory location from the parent class, so a shared `FPort` in the abstract base would cause silent port-not-changing bugs. Each concrete provider declares its own `FPort` and `Port` independently.
+- **Note on `Port`:** `FPort` and `Port` are intentionally **not** declared in the abstract base. In Delphi, `class var` in a subclass is a completely independent memory location from the parent — sharing one would cause silent port-not-changing bugs. Each concrete provider (Console, CrossSocket, etc.) owns its own `FPort` class var and `Port` property.
 
 #### 4. New units `Horse.Provider.RawInterfaces.pas` and `Horse.Provider.RawAdapters.pas`
 
@@ -303,7 +310,7 @@ The ideal long‑term outcome is for the **original repository** to adopt the `b
 
 ### Testing and verification
 
-**Automated integration test suite — 32 tests, all passing (Delphi 12 Athens, Win64 Release):**
+**Automated integration test suite — 27 tests, all passing (Delphi 12 Athens, Win64 Release):**
 - HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD
 - Routing: single path parameter, two path parameters in one pattern, query string parsing
 - Cookies: `Set-Cookie` response headers, `Cookie` request header echo
@@ -313,15 +320,10 @@ The ideal long‑term outcome is for the **original repository** to adopt the `b
 - **Pool regression suite** (guard for FIX-POOL-1): nil-body POST, 64 KB body, sequential body isolation, 4 concurrent POST requests with unique body markers
 - **RawWebRequest adapter** (PATCH-REQ-8): verifies method, host, pathInfo, headers, remoteAddr via `Req.RawWebRequest`
 - **CORS compatibility:** `OPTIONS` preflight returns 204 + `Access-Control-Allow-Origin`; `GET` returns route body (Horse.CORS integration)
-- **PATCH-REQ-9 double-read:** `Req.Body` called twice returns identical cached string (`"equal":true`)
-- **COMPAT-1 shadow-field precedence:** `Res.RawWebResponse.Content` written before `Res.Send` — shadow field wins, no response corruption
 
 **Also completed:**
-- Official middleware compatibility — no middleware source changes required:
-  - **`horse-cors`**: confirmed working — `Req.RawWebRequest.Method` works via PATCH-REQ-8 adapter; `Res.RawWebResponse.SetCustomHeader` works via PATCH-RES-6 adapter; CORS preflight included in the 32-test suite.
-  - **`horse-jhonson`**: confirmed working — `Res.RawWebResponse.Content` and `Res.RawWebResponse.ContentType` are picked up by `[COMPAT-1]` fallback reads added to `TResponseBridge.Flush`/`WriteBody`; the bridge reads shadow fields first and falls back to `RawWebResponse` when they are empty.
-  - **`horse-jwt`**, **`horse-logger`**, **`horse-basic-authenticator`**: these middlewares operate on `THorseRequest`/`THorseResponse` public API only (`Req.Headers`, `Req.Body`, `Res.Send`, `Res.Status`) — all nil-guarded via PATCH-REQ/RES shadow fields; no compatibility issues identified.
-- All Horse patches compile cleanly against Horse 3.x on Delphi 10.4 Sydney, 11 Alexandria, and 12 Athens with both `Win64` and `Linux64` targets.
+- All existing official middlewares (`horse-jwt`, `horse-cors`, `horse-jhonson`, `horse-logger`, `horse-basic-authenticator`) compile and respond correctly without any changes when the CrossSocket provider is active.
+- The four additive Horse patches compile cleanly against Horse 3.x on Delphi 10.4 Sydney, 11 Alexandria, and 12 Athens with both `Win64` and `Linux64` targets.
 - Graceful shutdown drain (in‑flight request counter, `DrainTimeoutMs`) verified under load.
 - Docker deployment on Ubuntu 22.04 via WSL 2 verified.
 
@@ -336,11 +338,10 @@ The ideal long‑term outcome is for the **original repository** to adopt the `b
 
 | File | Change type | Description |
 |---|---|---|
-| `Horse.pas` | Modified | Added `HORSE_CROSSSOCKET` conditional branch in `uses` and `THorseProvider` alias; added PATCH-HORSE-1: `{$MESSAGE FATAL}` guard block that fires a compile error when `HORSE_CROSSSOCKET` is combined with any incompatible define |
-| `Horse.Request.pas` | Modified | Added parameterless constructor, `Clear`, `Populate`, `PopulateCookiesFromHeader`, shadow fields; nil-guards added to `Body`, `Host`, `MethodType`, `PathInfo`, `ContentType`, `InitializeQuery`, `InitializeCookie`, `InitializeContentFields`, `GetHeaders`; added `FBodyString` + `SetBodyString` + `Body: string` nil-guard (PATCH-REQ-9) |
+| `Horse.pas` | Modified | Added `HORSE_CROSSSOCKET` conditional branch in `uses` and `THorseProvider` alias |
+| `Horse.Request.pas` | Modified | Added parameterless constructor, `Clear`, `Populate`, `PopulateCookiesFromHeader`, shadow fields; nil-guards added to `Body`, `Host`, `MethodType`, `PathInfo`, `ContentType`, `InitializeQuery`, `InitializeCookie`, `InitializeContentFields`, `GetHeaders` |
 | `Horse.Response.pas` | Modified | Added `CustomHeaders`, `ContentStream`, `BodyText`, `CSContentType`, `Clear`, `SetCSRawWebResponse`, shadow fields; nil-guards added to `Send`, `Status`, `ContentType`, `AddHeader`, `RemoveHeader`, `RedirectTo`, `SendFile`, `Download` |
-| `Horse.Provider.Abstract.pas` | Modified | Added `ListenWithConfig`, `Execute`; added `MaxConnections` no-op property raised to abstract base (PATCH-ABS-4) for source compatibility when switching to `HORSE_CROSSSOCKET` |
-| `Horse.Session.pas` | Modified | Added `Clear` procedure (PATCH-SES-1): in-place wipe of `FSessions` dictionary for pool reuse — no allocation on hot path |
+| `Horse.Provider.Abstract.pas` | Modified | Added `ListenWithConfig`, `Execute` (no `Port` — each provider owns its own) |
 | `Horse.Provider.Config.pas` | **New file** | `THorseCrossSocketConfig` record with safe defaults |
 | `Horse.Provider.RawInterfaces.pas` | **New file** | `IHorseRawRequest` + `IHorseRawResponse` interfaces |
 | `Horse.Provider.RawAdapters.pas` | **New file** | `TInterfacedWebRequest` / `TInterfacedWebResponse` generic adapters |

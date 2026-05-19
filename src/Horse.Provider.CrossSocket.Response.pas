@@ -59,6 +59,13 @@ unit Horse.Provider.CrossSocket.Response;
            already sent the response (e.g. via a direct ICrossHttpResponse call
            in middleware), the bridge skips writing to avoid a double-send.
 
+  [COMPAT-1] Middleware RawWebResponse compatibility.
+           Middleware that writes via Res.RawWebResponse.Content or
+           Res.RawWebResponse.ContentType (e.g. horse-jhonson) bypasses the
+           PATCH-RES-4 shadow fields. Flush reads both shadow fields first and
+           falls back to RawWebResponse if the shadow fields are empty —
+           no middleware source change required for compatibility.
+
   [IMP-6]  Content-Length header.
            Explicit Content-Length is set for string and stream bodies so that
            HEAD requests and HTTP proxies see a reliable byte count.
@@ -142,7 +149,8 @@ class procedure TResponseBridge.Flush(
   const AServerBanner:   string
 );
 var
-  CT: string;
+  CT:      string;
+  LRawRes: TWebResponse;
 begin
   // [IMP-4] Do not attempt to write a response that CrossSocket has already
   // sent (e.g. by middleware that called ICrossHttpResponse.Send directly).
@@ -161,6 +169,12 @@ begin
   // [SEC-21] Content-Type: prefer app-set value; fall back to JSON default
   // CSContentType is the PATCH-RES-4 shadow field (empty when not set)
   CT := AHorseRes.CSContentType;
+  // [COMPAT-1] Middleware (e.g. horse-jhonson) may write ContentType via
+  // Res.RawWebResponse.ContentType — pick it up when the shadow field is empty.
+  // RawWebResponse is a function — capture result before calling Assigned().
+  LRawRes := AHorseRes.RawWebResponse;
+  if (CT = '') and Assigned(LRawRes) then
+    CT := LRawRes.ContentType;
   if CT <> '' then
     ACrossRes.ContentType := CT;
   // If still empty CrossSocket will use its own default
@@ -266,8 +280,10 @@ class procedure TResponseBridge.WriteBody(
   const ACrossRes:       ICrossHttpResponse
 );
 var
-  Buf:    TBytes;
-  Stream: TStream;
+  Buf:      TBytes;
+  Stream:   TStream;
+  LRawRes:  TWebResponse;
+  LContent: string;
 begin
   // ContentStream: PATCH-RES-4 shadow field (nil when not set)
   Stream := AHorseRes.ContentStream;
@@ -291,6 +307,22 @@ begin
     // Send(string) confirmed overload — CrossSocket handles UTF-8 encoding
     ACrossRes.Send(AHorseRes.BodyText);
     Exit;
+  end;
+
+  // [COMPAT-1] Middleware (e.g. horse-jhonson) may write the body via
+  // Res.RawWebResponse.Content — pick it up when both shadow fields are empty.
+  // RawWebResponse is a function — capture result before calling Assigned().
+  LRawRes := AHorseRes.RawWebResponse;
+  if Assigned(LRawRes) then
+  begin
+    LContent := LRawRes.Content;
+    if LContent <> '' then
+    begin
+      ACrossRes.Header['Content-Length'] :=
+        IntToStr(TEncoding.UTF8.GetByteCount(LContent));
+      ACrossRes.Send(LContent);
+      Exit;
+    end;
   end;
 
   // [FIX-EMPTY-STATUS] For status >= 400 with no body, CrossSocket's _Send

@@ -473,6 +473,9 @@ class procedure TRequestBridge.MapBody(
 var
   BodyObj: TObject;
   Stream:  TStream;
+{$IF NOT DEFINED(FPC)}
+  LBytes:  TBytes;
+{$ENDIF}
 begin
   // ACrossReq.Body: TObject — confirmed property type on ICrossHttpRequest.
   // When BodyType = btBinary the concrete object is a TMemoryStream.
@@ -491,6 +494,16 @@ begin
         begin
           Stream.Position := 0;
           AHorseReq.Body(Stream);
+          // [PATCH-REQ-9] Decode body to string once here so that
+          // THorseRequest.Body: string is O(1) for all callers.
+          // FBody holds the non-owning stream reference for Body<TStream>
+          // callers; FBodyString holds the decoded text for Body: string.
+{$IF NOT DEFINED(FPC)}
+          SetLength(LBytes, Stream.Size);
+          Stream.Position := 0;
+          Stream.Read(LBytes[0], Stream.Size);
+          AHorseReq.SetBodyString(TEncoding.UTF8.GetString(LBytes));
+{$ENDIF}
         end;
       end;
 

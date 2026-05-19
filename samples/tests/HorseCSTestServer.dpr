@@ -34,6 +34,10 @@
     GET    /response/large              sends a fixed 65536-byte body (buffer tests)
     GET    /raw/webrequest              echoes Req.RawWebRequest.* properties as JSON  (PATCH-REQ-8)
     ALL    /raw/cors                    Horse.CORS-style: OPTIONS → 204 preflight, else 200
+    GET    /raw/webresponse             sets header via Res.RawWebResponse.SetCustomHeader  (PATCH-RES-6)
+    POST   /echo/body-twice             calls Req.Body twice — verifies FBodyString cache (PATCH-REQ-9)
+    GET    /compat/rawbody              writes RawWebResponse.Content then Res.Send — shadow wins (COMPAT-1)
+    POST   /pool/burst                  body echo under load — worker pool cascade wake test
 }
 
 uses
@@ -254,8 +258,8 @@ begin
   // ── Explicit status code ──────────────────────────────────────────────────────
   // Responds with the HTTP status code extracted from the path parameter.
   // Used to verify that non-200 codes flow through the pipeline correctly.
-  // GET /status/400 → 400 Bad Request (empty body)
-  // GET /status/500 → 500 Internal Server Error (empty body)
+  // GET /status/400 → 400 Bad Request  {"status":400}
+  // GET /status/500 → 500 Internal Server Error  {"status":500}
   THorse.Get('/status/:code',
     procedure(Req: THorseRequest; Res: THorseResponse)
     var
@@ -340,6 +344,90 @@ begin
         Exit;
       end;
       Res.ContentType('text/plain').Send('cors-route:' + LMethod);
+    end
+  );
+
+  // ── RawWebResponse adapter probe  (PATCH-RES-6) ─────────────────────────────
+  // Exercises Res.RawWebResponse.SetCustomHeader — the exact call Horse.CORS
+  // makes to inject Access-Control-* headers.  Before PATCH-RES-6 this AV'd on
+  // CrossSocket because Res.RawWebResponse was nil (FWebResponse is never
+  // assigned; FCSRawWebResponse was not wired).
+  // Also sets a header via Res.AddHeader for comparison — both must appear.
+  THorse.Get('/raw/webresponse',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LRaw: TWebResponse;
+    begin
+      LRaw := Res.RawWebResponse;
+      if not Assigned(LRaw) then
+      begin
+        Res.ContentType('application/json; charset=utf-8').Status(500)
+           .Send('{"hasAdapter":false,"error":"RawWebResponse is nil"}');
+        Exit;
+      end;
+      // This is the exact pattern Horse.CORS uses:
+      LRaw.SetCustomHeader('X-Via-RawResponse', 'PATCH-RES-6-OK');
+      // Also set via Horse's own AddHeader for comparison
+      Res.AddHeader('X-Via-AddHeader', 'AddHeader-OK');
+      Res.ContentType('application/json; charset=utf-8')
+         .Send('{"hasAdapter":true}');
+    end
+  );
+
+  // ── PATCH-REQ-9: double-read idempotency ─────────────────────────────────────
+  // Calls Req.Body twice and echoes both results.  Before PATCH-REQ-9, the
+  // second call re-read an exhausted TMemoryStream and returned an empty string.
+  // After PATCH-REQ-9, MapBody decodes to FBodyString once; both calls return
+  // the same cached value.
+  THorse.Post('/echo/body-twice',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LFirst:  string;
+      LSecond: string;
+    begin
+      LFirst  := Req.Body;
+      LSecond := Req.Body;
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(Format('{"first":"%s","second":"%s","equal":%s}',
+           [JE(LFirst), JE(LSecond), JB(LFirst = LSecond)]));
+    end
+  );
+
+  // ── COMPAT-1: RawWebResponse.Content does not corrupt shadow-field body ───────
+  // Writes to Res.RawWebResponse.Content (which is a stub on CrossSocket — the
+  // value is intentionally not forwarded through TInterfacedWebResponse).
+  // Then calls Res.Send via the Horse API (shadow field).
+  // Verifies:
+  //   (a) The shadow field wins — 'shadow-wins' body is returned.
+  //   (b) The COMPAT-1 fallback does not fire spuriously (GetContent returns '').
+  //   (c) No crash when RawWebResponse.Content is set before the shadow field.
+  THorse.Get('/compat/rawbody',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LRaw: TWebResponse;
+    begin
+      LRaw := Res.RawWebResponse;
+      // Simulate Indy-era middleware writing via the raw adapter (stub on CrossSocket)
+      if Assigned(LRaw) then
+        LRaw.Content := 'raw-should-not-appear';
+      // The Horse shadow-field API must take precedence
+      Res.ContentType('text/plain; charset=utf-8')
+         .Send('shadow-wins');
+    end
+  );
+
+  // ── Worker pool burst endpoint ────────────────────────────────────────────────
+  // Same as /echo/body but registered at a separate path so burst tests don't
+  // interfere with sequential body isolation tests (17).
+  THorse.Post('/pool/burst',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LBody: string;
+    begin
+      LBody := Req.Body;
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(Format('{"body":"%s","size":%d}',
+           [JE(LBody), Length(TEncoding.UTF8.GetBytes(LBody))]));
     end
   );
 
