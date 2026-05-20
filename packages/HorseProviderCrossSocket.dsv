@@ -1,8 +1,8 @@
 ﻿[ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlXHNyY1xIb3JzZS5SZXF1ZXN0LnBhcw==]
 Module=C:\lang\Repo\horse\src\Horse.Request.pas
-CursorX=32
-CursorY=618
-TopLine=591
+CursorX=70
+CursorY=207
+TopLine=207
 LeftCol=1
 Elisions=
 Bookmarks=
@@ -37,4 +37,14 @@ LeftCol=1
 Elisions=
 Bookmarks=
 EditViewName=C:\lang\Repo\horse-provider-crosssocket\src\Horse.Provider.CrossSocket.WebResponseAdapter.pas
+
+[ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlXHNyY1xIb3JzZS5SZXNwb25zZS5wYXM=]
+Module=C:\lang\Repo\horse\src\Horse.Response.pas
+CursorX=1
+CursorY=1
+TopLine=1
+LeftCol=1
+Elisions=
+Bookmarks=
+EditViewName=
 

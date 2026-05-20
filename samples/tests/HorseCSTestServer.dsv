@@ -240,9 +240,9 @@ EditViewName=C:\lang\Repo\horse-provider-crosssocket\samples\tests\HorseCSTestSe
 
 [ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlXHNyY1xIb3JzZS5Db3JlLlJvdXRlclRyZWUucGFz]
 Module=C:\lang\Repo\horse\src\Horse.Core.RouterTree.pas
-CursorX=1
-CursorY=204
-TopLine=170
+CursorX=101
+CursorY=421
+TopLine=1
 LeftCol=1
 Elisions=
 Bookmarks=
@@ -740,8 +740,8 @@ EditViewName=C:\lang\Repo\horse-provider-crosssocket\samples\tests\HorseCSTestCl
 
 [ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlXHNyY1xIb3JzZS5SZXNwb25zZS5wYXM=]
 Module=C:\lang\Repo\horse\src\Horse.Response.pas
-CursorX=77
-CursorY=108
+CursorX=1
+CursorY=1
 TopLine=1
 LeftCol=1
 Elisions=
@@ -1037,4 +1037,44 @@ LeftCol=1
 Elisions=
 Bookmarks=
 EditViewName=C:\lang\Repo\horse-provider-crosssocket\samples\tests\HorseCSTestClient.dpr
+[ClosedView_YzpccHJvZ3JhbSBmaWxlcyAoeDg2KVxlbWJhcmNhZGVyb1xzdHVkaW9cMjMuMFxzb3VyY2VcSW50
+ZXJuZXRcV2ViLkhUVFBBcHAucGFz]
+Module=c:\program files (x86)\embarcadero\studio\23.0\source\Internet\Web.HTTPApp.pas
+CursorX=1
+CursorY=38
+TopLine=1
+LeftCol=1
+Elisions=
+Bookmarks=
+EditViewName=c:\program files (x86)\embarcadero\studio\23.0\source\Internet\Web.HTTPApp.pas
+[ClosedView_YzpccHJvZ3JhbSBmaWxlcyAoeDg2KVxlbWJhcmNhZGVyb1xzdHVkaW9cMjMuMFxzb3VyY2VcSW50
+ZXJuZXRcV2ViLkhUVFBBcHAucGFz]
+Module=c:\program files (x86)\embarcadero\studio\23.0\source\Internet\Web.HTTPApp.pas
+CursorX=1
+CursorY=38
+TopLine=1
+LeftCol=1
+Elisions=
+Bookmarks=
+EditViewName=c:\program files (x86)\embarcadero\studio\23.0\source\Internet\Web.HTTPApp.pas
+
+[ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlXHNyY1xIb3JzZS5Qcm92aWRlci5GUEMuRGFlbW9uLnBhcw==]
+Module=C:\lang\Repo\horse\src\Horse.Provider.FPC.Daemon.pas
+CursorX=1
+CursorY=89
+TopLine=68
+LeftCol=1
+Elisions=
+Bookmarks=
+EditViewName=C:\lang\Repo\horse\src\Horse.Provider.FPC.Daemon.pas
+
+[ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlXHNyY1xIb3JzZS5Db21tb25zLnBhcw==]
+Module=C:\lang\Repo\horse\src\Horse.Commons.pas
+CursorX=20
+CursorY=300
+TopLine=267
+LeftCol=1
+Elisions=
+Bookmarks=
+EditViewName=C:\lang\Repo\horse\src\Horse.Commons.pas
 
