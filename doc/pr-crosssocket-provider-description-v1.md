@@ -159,6 +159,53 @@ The patched `Horse.pas` (PATCH-HORSE-1) adds `{$MESSAGE FATAL}` guards that fire
 
 Each message names both conflicting defines and explains the architectural reason. The guard block is inside `{$IF DEFINED(HORSE_CROSSSOCKET)}` so it compiles away entirely for Indy projects. Without this guard, a misconfigured project compiles cleanly but runs the wrong provider with no diagnostic.
 
+#### Define-namespace normalisation and cross-product Provider × Application-type units (PATCH-HORSE-2)
+
+PATCH-HORSE-2 reorganises the Horse compile-time configuration into **three orthogonal axes** with explicit namespaces, and ships five new convenience units so every architecturally-compatible Provider × Application-type combination becomes expressible.
+
+**Three define namespaces:**
+
+| Axis | Prefix | Examples |
+|---|---|---|
+| A · Provider (transport library) | `HORSE_PROVIDER_*` | `HORSE_PROVIDER_CROSSSOCKET` (mORMot reserved) |
+| B · Application type (binary shape) | `HORSE_APPTYPE_*` | `HORSE_APPTYPE_VCL`, `HORSE_APPTYPE_DAEMON`, `HORSE_APPTYPE_LCL` |
+| C · Host-managed runtime | `HORSE_HOST_*` | `HORSE_HOST_APACHE`, `HORSE_HOST_ISAPI`, `HORSE_HOST_CGI`, `HORSE_HOST_FCGI` |
+
+Axis C wins outright when set (no Provider involved). Axes A and B compose freely, subject to platform support (VCL is Delphi-only; LCL is FPC-only).
+
+**Legacy aliases preserve every existing project.** An alias block at the top of `Horse.pas` translates each old define to its new namespaced counterpart, so `.dproj` / `.lpi` files setting `HORSE_CROSSSOCKET`, `HORSE_VCL`, `HORSE_DAEMON`, `HORSE_LCL`, `HORSE_APACHE`, `HORSE_ISAPI`, `HORSE_CGI`, `HORSE_FCGI` continue to compile unchanged.
+
+**PATCH-HORSE-1 narrows accordingly.** It now fails compilation only for combinations that are genuinely impossible:
+
+| Forbidden combination | Reason |
+|---|---|
+| `HORSE_PROVIDER_*` + any `HORSE_HOST_*` | Host owns the socket; self-hosted transport cannot coexist |
+| `HORSE_APPTYPE_VCL` + FPC | VCL is Delphi-only; suggests `HORSE_APPTYPE_LCL` |
+| `HORSE_APPTYPE_LCL` + non-FPC | LCL is FPC/Lazarus-only; suggests `HORSE_APPTYPE_VCL` |
+| `HORSE_HOST_ISAPI` + FPC | ISAPI requires Delphi |
+| `HORSE_NOPROVIDER` + anything else | The escape hatch is mutually exclusive |
+
+Combinations previously flagged as fatal (e.g. `HORSE_CROSSSOCKET` + `HORSE_VCL`) now compile and resolve to the new cross-product units below.
+
+**Five new cross-product Provider units** (in `horse-provider-crosssocket/src/`, all inheriting from `THorseProviderCrossSocket` so they reuse the entire transport / pool / bridge infrastructure):
+
+| Unit | Selected by | Convenience class |
+|---|---|---|
+| `Horse.Provider.CrossSocket.VCL` | `HORSE_PROVIDER_CROSSSOCKET` + `HORSE_APPTYPE_VCL` | `TfrmHorseVCLHost` — VCL form base with `Port` + auto-wired `FormCreate`/`FormClose` |
+| `Horse.Provider.CrossSocket.Daemon` | `HORSE_PROVIDER_CROSSSOCKET` + `HORSE_APPTYPE_DAEMON` (Delphi — cross-platform) | `THorseCrossSocketService` *(MSWINDOWS — TService base with worker-thread `Listen` + drain on `ServiceStop`)* &nbsp;OR&nbsp; `THorseCrossSocketLinuxDaemonApp.Run` *(non-Windows — POSIX SIGTERM/SIGINT handlers + blocking `Listen`)*. Picked by `{$IFDEF MSWINDOWS}` inside the unit — same defines select the right helper per build target. |
+| `Horse.Provider.CrossSocket.FPC.Daemon` | `HORSE_PROVIDER_CROSSSOCKET` + `HORSE_APPTYPE_DAEMON` (FPC) | `THorseCrossSocketDaemonApp.Run` — installs `fpSignal(SIGTERM/SIGINT)` + blocks on `Listen` |
+| `Horse.Provider.CrossSocket.FPC.LCL` | `HORSE_PROVIDER_CROSSSOCKET` + `HORSE_APPTYPE_LCL` | `TfrmHorseLCLHost` — Lazarus mirror of the VCL form base |
+| `Horse.Provider.CrossSocket.FPC.HTTPApplication` | (referenced explicitly when desired) | `THorseCrossSocketHTTPApp.Run` — alias of Daemon runner for projects organised around HTTPApplication vocabulary |
+
+Each new unit is small (~80–150 lines) because they delegate all transport behaviour to the existing `Horse.Provider.CrossSocket`. They add only the shape-specific lifecycle wiring that users previously wrote by hand following the recipes in `doc/providers.md §8`.
+
+The selection happens in a two-stage `{$IFDEF}` chain in `Horse.pas`:
+
+1. **Stage 1 — Axis C wins outright.** Any `HORSE_HOST_*` define selects the host-managed provider, ignoring Axes A and B.
+2. **Stage 2 — Axis A × Axis B compose.** When `HORSE_PROVIDER_CROSSSOCKET` is set, the `HORSE_APPTYPE_*` define picks the matching cross-product unit (or the existing console-shape unit if no `HORSE_APPTYPE_*` is set). When `HORSE_PROVIDER_CROSSSOCKET` is *not* set, the default Provider (Indy on Delphi, `fphttpserver` on FPC) is used, and `HORSE_APPTYPE_*` selects from the Indy-side units already in Horse.
+
+The `boss.json` version of `horse-provider-crosssocket` is bumped to `1.0.5` and requires `horse >= 3.1.98` (the release that ships PATCH-HORSE-2). Existing consumers pinned to `1.0.4` continue working without picking up the new units; consumers that bump get the cross-product units automatically via Boss.
+
 #### What CrossSocket replaces vs. what it cannot replace
 
 | Deployment model | Replace with CrossSocket? | Notes |
@@ -175,39 +222,41 @@ Each message names both conflicting defines and explains the architectural reaso
 
 ### Required search paths when using Boss
 
-Both packages ship a `boss.json` that tells Boss exactly which paths to expose. Understanding what Boss does — and does not — do with each field is important for a correct project setup.
-
-#### What Boss adds automatically
-
-Boss distinguishes between two path fields in `boss.json`:
+Each repository ships a `boss.json` that tells Boss which paths to expose. Boss distinguishes between two path fields:
 
 | Field | What Boss does with it |
 |---|---|
-| `mainsrc` | Added to the **compiler Search Path** in your `.dproj` — units here are found by `uses` clauses |
-| `browsingpath` | Added to the **IDE Browsing Path only** — used for code completion and navigation, but the compiler does **not** search these paths |
+| `mainsrc` | Added to the **compiler Search Path** in your `.dproj` — units here are resolved by `uses` clauses at build time |
+| `browsingpath` | Added to the **IDE Browsing Path** — used for code completion and Find Declaration navigation |
 
-Has you can see on `boss.json`, BOSS installs the following packages:
+The three repositories declare the following:
 
-**`horse-provider-crosssocket`** → Boss automatically adds:
-```
-..\..\..\..\modules\horse-provider-crosssocket\src
-```
-
-**`delphi-cross-socket`** (freitasjca fork)  → Boss automatically adds:
-```
-..\..\..\..\modules\Delphi-Cross-Socket
-..\..\..\..\modules\Delphi-Cross-Socket\Net
-..\..\..\..\modules\Delphi-Cross-Socket\Utils
-..\..\..\..\modules\Delphi-Cross-Socket\DelphiToFPC
-..\..\..\..\modules\Delphi-Cross-Socket\CnPack
+**`horse-provider-crosssocket`** (`boss.json`):
+```json
+"mainsrc":     "src/",
+"browsingpath": "src/;modules/Delphi-Cross-Socket/CnPack/Common;modules/Delphi-Cross-Socket/CnPack/Crypto"
 ```
 
-**`horse`** (freitasjca fork)  → Boss automatically adds:
-```
-..\..\..\..\modules\horse\src
+**`delphi-cross-socket`** (freitasjca fork — `boss.json`):
+```json
+"mainsrc":     "Net/",
+"browsingpath": "Net/;Utils/;CnPack/Common/;CnPack/Crypto/"
 ```
 
-All paths above assume the standard Boss `modules\` layout at the project root. Adjust if your project uses a different Boss base directory.
+**`horse`** (freitasjca fork): `mainsrc: "src/"`.
+
+Resolving against the standard Boss `modules\` layout at the project root, the union of paths visible after `boss install` is:
+
+| Path | Source | Visibility |
+|---|---|---|
+| `modules\horse\src` | `horse.mainsrc` | Compiler + IDE |
+| `modules\horse-provider-crosssocket\src` | `horse-provider-crosssocket.mainsrc` | Compiler + IDE |
+| `modules\Delphi-Cross-Socket\Net` | `delphi-cross-socket.mainsrc` | Compiler + IDE |
+| `modules\Delphi-Cross-Socket\Utils` | `delphi-cross-socket.browsingpath` | IDE only |
+| `modules\Delphi-Cross-Socket\CnPack\Common` | both browsingpaths | IDE only |
+| `modules\Delphi-Cross-Socket\CnPack\Crypto` | both browsingpaths | IDE only |
+
+The CnPack paths are declared in `browsingpath` rather than `mainsrc` because only a small subset of the OpenSSL/HTTP-2 code in CrossSocket pulls them in. Projects that build a non-TLS profile (or a profile that excludes the CnPack-dependent units) do not need the compiler to walk those directories. Projects that *do* hit CnPack at compile time should mirror the same two CnPack directories into their own `.dproj` Search Path — most concrete sample projects in `horse-provider-crosssocket/samples/` already do.
 
 
 ---
@@ -219,20 +268,23 @@ All modifications are in separate commits and are fully backward‑compatible. D
 #### 1. `Horse.Request.pas`
 
 - **Parameterless constructor** `THorseRequest.Create` – allows the context pool to pre‑allocate request objects at startup before any real request arrives. The existing constructor that accepts a `TWebRequest` is completely unchanged.
-- **`Clear` procedure** – fast field‑wipe for object reuse between requests (zero‑allocation hot path). Resets `FBody`, `FSession`, `FWebRequest`, clears param dictionaries, and re‑creates `FSessions`.  
+- **`Clear` procedure** (PATCH-REQ-2) – fast field‑wipe for object reuse between requests (zero‑allocation hot path). Sets `FBody`, `FWebRequest`, `FSession` to `nil`, wipes the CrossSocket shadow fields (`FCSMethod`, `FCSMethodType`, `FCSPathInfo`, `FCSContentType`, `FCSRemoteAddr`, `FBodyString`), frees the per-request `FCSRawWebRequest` adapter, clears the param-collection dictionaries in place (`FHeaders`, `FParams`) or rebuilds them lazily (`FQuery`, `FContentFields`, `FCookie`), and calls `FSessions.Clear` rather than `FreeAndNil` so the `THorseSessions` instance is reused across pool recycles (PATCH-SES-1 — see `Horse.Session.pas`).  
   ⚠️ `FBody` is a **non‑owning reference** into the CrossSocket receive buffer and is **never freed** by `Clear`.
-- **`Populate` procedure** – injects per‑request shadow fields (method, method type, path, content‑type, remote address) directly, bypassing the `FWebRequest` delegation that would crash when `FWebRequest` is `nil`.
-- **`PopulateCookiesFromHeader` procedure** – parses the raw `Cookie` request header into the `THorseRequest.Cookie` collection without requiring a live `TWebRequest`.
+- **`Populate` procedure** (PATCH-REQ-3) – injects per‑request shadow fields (method, method type, path, content‑type, remote address) directly, bypassing the `FWebRequest` delegation that would crash when `FWebRequest` is `nil`.
+- **`PopulateCookiesFromHeader` procedure** (PATCH-REQ-4) – parses the raw `Cookie` request header into the `THorseRequest.Cookie` collection without requiring a live `TWebRequest`. Kept for any future provider whose transport does not pre-parse cookies; the CrossSocket bridge itself uses CrossSocket's already-parsed `TRequestCookies` collection instead and so does not invoke this method.
+- **Nil-guard branches added to 9 existing accessors** (`Body`, `Host`, `MethodType`, `PathInfo`, `ContentType`, `InitializeQuery`, `InitializeCookie`, `InitializeContentFields`, `Headers`) so each method returns the corresponding shadow field when `FWebRequest = nil`. The Indy code path inside each method is byte-for-byte identical to the upstream.
 
 #### 2. `Horse.Response.pas`
 
-- **`CustomHeaders` property** – read‑only exposure of the internal `FCustomHeaders` dictionary, allowing the response bridge to iterate all application‑set headers in a single pass for efficient forwarding.
-- **`ContentStream` property** – supports zero‑copy stream responses (large files, generated content) without intermediate string copies.
-- **`BodyText` property** – exposes the shadow string body field set when `FWebResponse` is `nil`.
-- **`CSContentType` property** – exposes the shadow content‑type field for the same reason.
-- **`Clear` procedure** – resets `FStatus`, `FContent`, `FContentType`, `FContentStream`, clears `FCustomHeaders`, and sets shadow fields to their defaults, mirroring the request‑side pooling contract.
+- **`CustomHeaders` property** (PATCH-RES-3) – read‑only exposure of the internal `FCustomHeaders` store, allowing the response bridge to iterate all application‑set headers in a single pass for efficient forwarding.
+- **`ContentStream` property** (PATCH-RES-4) – read-only accessor that exposes the `FCSContentStream` shadow field, supporting zero‑copy stream responses (large files, generated content) without intermediate string copies.
+- **`BodyText` property** (PATCH-RES-4) – exposes the shadow string body field (`FCSBody`) set when `FWebResponse` is `nil`.
+- **`CSContentType` property** (PATCH-RES-4) – exposes the shadow content‑type field (`FCSContentType`) for the same reason.
+- **`Clear` procedure** (PATCH-RES-2) – resets the shadow fields to their defaults (`FCSStatusCode := 200`, `FCSBody := ''`, `FCSContentType := ''`, `FCSContentStream := nil`), clears `FCustomHeaders` in place (the dictionary object is reused — no heap churn), frees the per-request `FCSRawWebResponse` adapter, sets `FWebResponse := nil`, and resets `FContent` — mirroring the request-side pooling contract.
 - **`SetCSRawWebResponse` procedure** (PATCH-RES-6) – assigns a `TWebResponse` adapter so `RawWebResponse` returns a non‑nil object for middleware that calls `Res.RawWebResponse.SetCustomHeader` (e.g. Horse.CORS). Ownership transfers to `THorseResponse`; freed by `Clear` on pool release.
-- **Known limitation:** `FCustomHeaders` is a `TDictionary<string,string>` (Delphi), which stores one value per key. Multiple `AddHeader('Set-Cookie', ...)` calls will keep only the last value. Applications requiring multiple cookies in one response should compose them into a single header value for now.
+- **`EnsureCustomHeaders` private helper** (PATCH-RES-7) – lazy allocator for `FCustomHeaders`. The dictionary (Delphi) or string-list (FPC) is no longer created in the constructor; instead `AddHeader` calls `EnsureCustomHeaders` on first use, so any Indy/ISAPI/CGI request that never calls `AddHeader` pays zero allocation cost for this field.
+- **Nil-guard branches added to 8 existing setters** (`Send`, `Status`, `ContentType`, `AddHeader`, `RemoveHeader`, `RedirectTo`, `SendFile`, `Download`) so each method writes to the corresponding shadow field when `FWebResponse = nil`. The Indy code path inside each method is byte-for-byte identical to the upstream.
+- **Known limitation:** `FCustomHeaders` is a `TDictionary<string,string>` (Delphi) / `TStringList` (FPC), which stores one value per key. Multiple `AddHeader('Set-Cookie', ...)` calls will keep only the last value. Applications requiring multiple cookies in one response should compose them into a single header value for now.
 
 #### 3. `Horse.Provider.Abstract.pas`
 
@@ -318,8 +370,8 @@ The ideal long‑term outcome is for the **original repository** to adopt the `b
 
 **Also completed:**
 - Official middleware compatibility — no middleware source changes required:
-  - **`horse-cors`**: confirmed working — `Req.RawWebRequest.Method` works via PATCH-REQ-8 adapter; `Res.RawWebResponse.SetCustomHeader` works via PATCH-RES-6 adapter; CORS preflight included in the 32-test suite.
-  - **`horse-jhonson`**: confirmed working — `Res.RawWebResponse.Content` and `Res.RawWebResponse.ContentType` are picked up by `[COMPAT-1]` fallback reads added to `TResponseBridge.Flush`/`WriteBody`; the bridge reads shadow fields first and falls back to `RawWebResponse` when they are empty.
+  - **`horse-cors`**: confirmed working — `Req.RawWebRequest.Method` works via PATCH-REQ-8 adapter; `Res.RawWebResponse.SetCustomHeader` works via PATCH-RES-6 adapter (inherited `TWebResponse.CustomHeaders` is merged into the response by `TResponseBridge.CopyHeaders`); CORS preflight included in the 32-test suite.
+  - **`horse-jhonson`**: works via `Res.Send` / `Res.ContentType`, which is the path the upstream code already uses. The `[COMPAT-1]` fallback in `TResponseBridge.Flush` / `WriteBody` additionally reads `Res.RawWebResponse.Content` / `.ContentType` when the shadow fields are empty — fully active on FPC (where `TInterfacedWebResponse` inherits `TResponse` without stubbing `Content`), dormant on Delphi (where `TInterfacedWebResponse.SetContent` is a stub, so writes via `Res.RawWebResponse.Content := X` are dropped). Nothing in the official `horse-jhonson` source path depends on the dormant Delphi case; extending the Delphi adapter to capture `SetContent` is tracked as an enhancement.
   - **`horse-jwt`**, **`horse-logger`**, **`horse-basic-authenticator`**: these middlewares operate on `THorseRequest`/`THorseResponse` public API only (`Req.Headers`, `Req.Body`, `Res.Send`, `Res.Status`) — all nil-guarded via PATCH-REQ/RES shadow fields; no compatibility issues identified.
 - All Horse patches compile cleanly against Horse 3.x on Delphi 10.4 Sydney, 11 Alexandria, and 12 Athens with both `Win64` and `Linux64` targets.
 - Graceful shutdown drain (in‑flight request counter, `DrainTimeoutMs`) verified under load.
@@ -336,8 +388,8 @@ The ideal long‑term outcome is for the **original repository** to adopt the `b
 
 | File | Change type | Description |
 |---|---|---|
-| `Horse.pas` | Modified | Added `HORSE_CROSSSOCKET` conditional branch in `uses` and `THorseProvider` alias; added PATCH-HORSE-1: `{$MESSAGE FATAL}` guard block that fires a compile error when `HORSE_CROSSSOCKET` is combined with any incompatible define |
-| `Horse.Request.pas` | Modified | Added parameterless constructor, `Clear`, `Populate`, `PopulateCookiesFromHeader`, shadow fields; nil-guards added to `Body`, `Host`, `MethodType`, `PathInfo`, `ContentType`, `InitializeQuery`, `InitializeCookie`, `InitializeContentFields`, `GetHeaders`; added `FBodyString` + `SetBodyString` + `Body: string` nil-guard (PATCH-REQ-9) |
+| `Horse.pas` | Modified | Added `HORSE_CROSSSOCKET` conditional branch in `uses` and `THorseProvider` alias; added PATCH-HORSE-1: `{$MESSAGE FATAL}` guard block that fires a compile error when `HORSE_CROSSSOCKET` is combined with any incompatible define. **PATCH-HORSE-2** further reorganises the chain into three orthogonal namespaces (`HORSE_PROVIDER_*` / `HORSE_APPTYPE_*` / `HORSE_HOST_*`) with a legacy-alias block for full backwards compatibility, narrows PATCH-HORSE-1 to only architecturally-impossible combinations, and wires the new cross-product CrossSocket × Application-type units into the chain |
+| `Horse.Request.pas` | Modified | Added parameterless constructor, `Clear`, `Populate`, `PopulateCookiesFromHeader`, shadow fields; nil-guards added to `Body`, `Host`, `MethodType`, `PathInfo`, `ContentType`, `InitializeQuery`, `InitializeCookie`, `InitializeContentFields`, `Headers`; added `FBodyString` + `SetBodyString` + `Body: string` nil-guard (PATCH-REQ-9); added `Method: string` accessor (PATCH-REQ-10) |
 | `Horse.Response.pas` | Modified | Added `CustomHeaders`, `ContentStream`, `BodyText`, `CSContentType`, `Clear`, `SetCSRawWebResponse`, shadow fields; nil-guards added to `Send`, `Status`, `ContentType`, `AddHeader`, `RemoveHeader`, `RedirectTo`, `SendFile`, `Download` |
 | `Horse.Provider.Abstract.pas` | Modified | Added `ListenWithConfig`, `Execute`; added `MaxConnections` no-op property raised to abstract base (PATCH-ABS-4) for source compatibility when switching to `HORSE_CROSSSOCKET` |
 | `Horse.Session.pas` | Modified | Added `Clear` procedure (PATCH-SES-1): in-place wipe of `FSessions` dictionary for pool reuse — no allocation on hot path |

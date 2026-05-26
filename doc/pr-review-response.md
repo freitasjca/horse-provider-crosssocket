@@ -370,7 +370,9 @@ If a "minimal abstract layer" is desired in the future, `Execute` could move to 
 
 **Reviewer's claim:** `HORSE_CROSSSOCKET` combined with `HORSE_ISAPI` / `HORSE_APACHE` / etc. silently picks the wrong provider. A 4-line `{$MESSAGE FATAL}` guard should be added.
 
-**Status:** **Resolved by PATCH-HORSE-1.**
+**Status:** **Resolved by PATCH-HORSE-1; subsequently refined by PATCH-HORSE-2.**
+
+> **Note (2026-05, PATCH-HORSE-2 follow-up):** the original PATCH-HORSE-1 block listed below treated several combinations as fatal that were actually only "not yet implemented" — `HORSE_CROSSSOCKET` + `HORSE_VCL` / `_DAEMON` / `_LCL`. PATCH-HORSE-2 (a) introduces the three-axis define model (`HORSE_PROVIDER_*` × `HORSE_APPTYPE_*` × `HORSE_HOST_*`), (b) ships five cross-product Provider units that make those combinations valid, and (c) **narrows** the `{$MESSAGE FATAL}` block to only the architecturally impossible cases (any `HORSE_PROVIDER_*` + any `HORSE_HOST_*`). The legacy define names still work — PATCH-HORSE-2 keeps them as permanent aliases. See `architecture-diagrams.md §5` and `patches/horse/doc/providers.md §6`. The PATCH-HORSE-1 listing below is preserved as the original review-cycle record.
 
 `patches/horse/src/Horse.pas:8-44`
 ```pascal

@@ -67,7 +67,7 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 | OpenSSL | 1.1.x or 3.x | Only required for HTTPS |
 | [Boss](https://github.com/HashLoad/boss) | any | Optional — for automatic dependency install |
 
-> **Horse fork required.** This provider needs four additive changes to Horse that do not exist upstream yet (see the section below). Until a PR is merged into `HashLoad/horse`, the `boss.json` of this repo declares a dependency on `github.com/your-org/horse` — the maintained fork — instead of `github.com/HashLoad/horse`. Boss resolves the fork transparently; nothing in your application code changes.
+> **Horse fork required.** This provider requires additive changes to Horse that do not exist upstream yet (see the section below). Until a PR is merged into `HashLoad/horse`, the `boss.json` of this repo declares a dependency on `github.com/your-org/horse` — the maintained fork — instead of `github.com/HashLoad/horse`. Boss resolves the fork transparently; nothing in your application code changes.
 
 > **Delphi-Cross-Socket patches required.** Two files in Delphi-Cross-Socket also need patches: `Net.CrossSslSocket.OpenSSL.pas` (adds mTLS `SetCACertificateFile` / `SetVerifyPeer` API) and `Net.CrossSocket.Iocp.pas` (fixes a DEBUG-build shutdown cascade). All patch files are in the [`patches/`](#applying-the-patches) directory of this repository.
 
@@ -87,7 +87,7 @@ Since the upstream PR may take time to be reviewed and merged, the recommended a
 https://github.com/HashLoad/horse  →  Fork  →  github.com/your-org/horse
 ```
 
-**Step 2 — Apply the four patches** (described in full below) on a branch named `crosssocket-patches` and merge it into `main` of your fork.
+**Step 2 — Apply the patches** (described in full below) on a branch named `crosssocket-patches` and merge it into `main` of your fork.
 
 **Step 3 — Tag a semver release on your fork**
 
@@ -136,9 +136,9 @@ Commit and tag a new provider release. Consumers run `boss update` and the fork 
 
 ---
 
-### What the four patches add
+### What the Horse patches add
 
-Every change is strictly additive — no existing method is removed, renamed, or given a different signature. All existing Horse projects continue to compile and run without modification.
+No existing method is removed, renamed, or given a different signature. Existing accessor methods in `THorseRequest` and `THorseResponse` gain nil-guard branches for the CrossSocket path, but the Indy code path within each is unchanged. All existing Horse projects continue to compile and run without modification.
 
 > **Compatibility guarantee:** adding overloads and new methods to Horse does not break any existing compiled binary or source file. The `{$DEFINE HORSE_CROSSSOCKET}` define that activates this provider is the only project-level change a consuming project ever needs to make.
 
@@ -321,7 +321,7 @@ This change is two new lines inside `Execute` (the nil-guard branch) and two sub
 
 ### Change 4 — `Horse.Provider.Abstract.pas` + new `Horse.Provider.Config.pas`
 
-**Why:** `THorseProviderCrossSocket` exposes `ListenWithConfig(APort, AConfig)` as a class method. The abstract base class `THorseProvider` must declare a virtual version of this method so the compiler knows the signature. The default implementation simply calls `Listen(APort)`, so all existing providers (Console, VCL, Daemon, CGI, Apache) compile and run without any modification.
+**Why:** `THorseProviderCrossSocket` exposes `ListenWithConfig(APort, AConfig)` as a class method. The abstract base class `THorseProvider` must declare a virtual version of this method so the compiler knows the signature. The base implementation raises an exception to make it immediately obvious when a concrete provider has forgotten to override it — all existing concrete providers (Console, VCL, Daemon, CGI, Apache) override it and call `SetPort(APort)` before their own `Listen`, so they are completely unaffected.
 
 **Add `Horse.Provider.Config.pas`** (new file — prevents a circular unit reference between the abstract base and the CrossSocket provider):
 
@@ -411,9 +411,13 @@ class procedure THorseProvider.ListenWithConfig(
   const AConfig: THorseCrossSocketConfig
 );
 begin
-  { Default: ignore the config and fall back to plain Listen.
-    Indy, VCL, CGI, Apache, Daemon providers all inherit this. }
-  Listen(APort);
+  { Base guard: every concrete provider must override this.
+    Raising here converts "silent wrong port" into an immediate
+    detectable oversight. All existing patched providers already
+    override ListenWithConfig and call SetPort(APort) before Listen. }
+  raise Exception.CreateFmt(
+    '%s must override ListenWithConfig — call SetPort(APort) before Listen.',
+    [ClassName]);
 end;
 ```
 
@@ -433,7 +437,7 @@ end;
 | `Horse.Provider.Abstract.pas` | Add `ListenWithConfig` virtual class method | Zero — default delegates to `Listen` |
 | `Horse.Provider.Config.pas` | New file — shared config record | Zero — new file |
 
-All changes are purely additive. No existing method, property, constructor, or destructor is modified.
+No existing method is removed, renamed, or given a different signature. Existing accessor methods in `THorseRequest` and `THorseResponse` are modified with nil-guard branches for the CrossSocket path; the Indy code path within each is unchanged.
 
 ---
 
@@ -475,7 +479,7 @@ To inspect what any individual patch changes:
 diff patches/horse/src/Horse.Request.pas horse/src/Horse.Request.pas
 ```
 
-`Horse.Provider.Abstract.pas` and `Horse.pas` must be edited manually — their changes depend on the rest of your project's provider configuration and are not included as drop-in patch files.
+All six files above, plus `patches/horse/src/Horse.Provider.Abstract.pas` and `patches/horse/src/Horse.pas`, can be applied as drop-in copies from the `patches/` directory — no manual editing is required.
 
 ---
 
@@ -930,7 +934,7 @@ msbuild HorseCSTestClient.dproj  (Win64 Release)
 scripts\run-tests.bat
     1. start HorseCSTestServer.exe in background (port 9100)
     2. poll GET /ping until server is ready (up to 10 s)
-    3. run HorseCSTestClient.exe — 14 integration tests
+    3. run HorseCSTestClient.exe — 32 integration tests
     4. kill server unconditionally
     5. exit with client exit code (0 = all pass, N = N failures)
 ```
@@ -1025,19 +1029,29 @@ All existing Horse middleware and application code is compatible without modific
 
 ```
 src/
-├── Horse.Provider.CrossSocket.pas          Main provider — THorseProviderCrossSocket
-├── Horse.Provider.CrossSocket.Server.pas   TCrossHttpServer wrapper + THorseCrossSocketConfig
-├── Horse.Provider.CrossSocket.Pool.pas     Thread-safe context object pool
-├── Horse.Provider.CrossSocket.Request.pas  ICrossHttpRequest → THorseRequest bridge + validation
-├── Horse.Provider.CrossSocket.Response.pas THorseResponse → ICrossHttpResponse bridge
-└── Horse.Provider.CrossSocket.WorkerPool.pas  CPU-bound worker thread pool
+├── Horse.Provider.CrossSocket.pas               Main provider — THorseProviderCrossSocket
+├── Horse.Provider.CrossSocket.Server.pas        TCrossHttpServer wrapper + THorseCrossSocketConfig
+├── Horse.Provider.CrossSocket.Pool.pas          Thread-safe context object pool
+├── Horse.Provider.CrossSocket.Request.pas       ICrossHttpRequest → THorseRequest bridge + validation
+├── Horse.Provider.CrossSocket.Response.pas      THorseResponse → ICrossHttpResponse bridge
+├── Horse.Provider.CrossSocket.WorkerPool.pas    CPU-bound worker thread pool
+├── Horse.Provider.CrossSocket.WebRequestAdapter.pas   TCrossSocketWebRequest (backward compat)
+├── Horse.Provider.CrossSocket.WebResponseAdapter.pas  TCrossSocketWebResponse (backward compat)
+├── Horse.Provider.CrossSocket.RawRequest.pas    TCrossSocketRawRequest — IHorseRawRequest impl
+└── Horse.Provider.CrossSocket.RawResponse.pas   TCrossSocketRawResponse — IHorseRawResponse impl
 
 patches/
 ├── horse/src/
-│   ├── Horse.Request.pas           — PATCH-REQ-*: no-arg ctor, Clear, shadow fields, nil-guards
+│   ├── Horse.pas                   — PATCH-HORSE-1: incompatible define guard + CrossSocket switch
+│   ├── Horse.Request.pas           — PATCH-REQ-*: no-arg ctor, Clear, shadow fields, nil-guards, SetBodyString
 │   ├── Horse.Response.pas          — PATCH-RES-*: Clear, shadow fields, CustomHeaders, ContentStream
 │   ├── Horse.Core.RouterTree.pas   — PATCH-TREE-1: nil-guard for RawWebRequest in Execute
-│   └── Horse.Provider.Config.pas   — THorseCrossSocketConfig record (new file)
+│   ├── Horse.Provider.Abstract.pas — PATCH-ABS-*: ListenWithConfig, Execute, MaxConnections no-op
+│   ├── Horse.Provider.Config.pas   — THorseCrossSocketConfig record (new file)
+│   ├── Horse.Session.pas           — PATCH-SES-1: Clear procedure for pool reuse
+│   ├── Horse.Provider.RawInterfaces.pas  — NEW: IHorseRawRequest + IHorseRawResponse interfaces
+│   ├── Horse.Provider.RawAdapters.pas    — NEW: TInterfacedWebRequest/TInterfacedWebResponse
+│   └── Horse.Provider.{Console,Daemon,VCL,FPC.*}.pas  — updated concrete providers
 └── Delphi-Cross-Socket/Net/
     ├── Net.CrossSslSocket.OpenSSL.pas  — mTLS support
     └── Net.CrossSocket.Iocp.pas        — DEBUG-build shutdown fix
@@ -1065,6 +1079,12 @@ Pre-allocates `THorseContext` objects at startup and reuses them across requests
 
 **`Horse.Provider.CrossSocket.WorkerPool`**
 Fixed-size worker thread pool for CPU-bound tasks. Bounded queue (4 096), pluggable error callback, named threads, graceful drain on shutdown.
+
+**`Horse.Provider.CrossSocket.RawRequest`** / **`Horse.Provider.CrossSocket.RawResponse`**
+Implement `IHorseRawRequest` / `IHorseRawResponse` by wrapping `ICrossHttpRequest` / `ICrossHttpResponse` in ~15 / ~1 one-liner methods. These are the CrossSocket-specific adapters.
+
+**`Horse.Provider.CrossSocket.WebRequestAdapter`** / **`Horse.Provider.CrossSocket.WebResponseAdapter`**
+Thin constructors that create a `TCrossSocketWebRequest` / `TCrossSocketWebResponse` — backward-compatible subclasses of `TInterfacedWebRequest` / `TInterfacedWebResponse` (from `Horse.Provider.RawAdapters`). Assigned to `THorseRequest.RawWebRequest` and `THorseResponse.RawWebResponse` so existing middleware that calls `Req.RawWebRequest.Method` or `Res.RawWebResponse.SetCustomHeader` works without modification.
 
 ---
 

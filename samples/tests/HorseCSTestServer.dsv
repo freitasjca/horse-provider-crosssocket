@@ -1,7 +1,7 @@
 ﻿[ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlXHNyY1xIb3JzZS5wYXM=]
 Module=C:\lang\Repo\horse\src\Horse.pas
-CursorX=33
-CursorY=12
+CursorX=5
+CursorY=1
 TopLine=1
 LeftCol=1
 Elisions=
@@ -1077,4 +1077,14 @@ LeftCol=1
 Elisions=
 Bookmarks=
 EditViewName=C:\lang\Repo\horse\src\Horse.Commons.pas
+
+[ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlXHNyY1xIb3JzZS5FeGNlcHRpb24ucGFz]
+Module=C:\lang\Repo\horse\src\Horse.Exception.pas
+CursorX=1
+CursorY=1
+TopLine=1
+LeftCol=1
+Elisions=
+Bookmarks=
+EditViewName=C:\lang\Repo\horse\src\Horse.Exception.pas
 

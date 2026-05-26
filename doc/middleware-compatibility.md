@@ -2,7 +2,7 @@
 
 This document enumerates each official Horse middleware package, the `THorseRequest` / `THorseResponse` surface it touches, and the mechanism by which it works on the CrossSocket provider without source changes.
 
-The CrossSocket provider's compatibility goal is **drop-in replacement for Indy** — every middleware in the official ecosystem must compile and behave identically when `{$DEFINE HORSE_CROSSSOCKET}` is set, with no per-middleware patch required.
+The CrossSocket provider's compatibility goal is **drop-in replacement for Indy** — every middleware in the official ecosystem must compile and behave identically when `{$DEFINE HORSE_PROVIDER_CROSSSOCKET}` is set (or the legacy alias `HORSE_CROSSSOCKET` — PATCH-HORSE-2 keeps it working forever), with no per-middleware patch required.
 
 The compatibility surface is:
 

@@ -887,19 +887,21 @@ end.
 
 ### Step 7 — Register the provider in `Horse.pas`
 
-Add a new `{$ELSEIF}` branch in the conditional chain:
+PATCH-HORSE-2 reserves the `HORSE_PROVIDER_*` namespace for new transport providers — use that name. (If you also want to support the unprefixed legacy form for users coming from informal docs, add an alias in the legacy block at the top of `Horse.pas`; not required for new providers.)
+
+Add a new `{$ELSEIF}` branch in the Provider selection chain (Stage 2 in the post-PATCH-HORSE-2 chain — see `architecture-diagrams.md §5`):
 
 ```pascal
-// Horse.pas — uses clause
-{$ELSEIF DEFINED(HORSE_NGHTTP2)}
+// Horse.pas — uses clause (Stage 2: self-hosted Provider selection)
+{$ELSEIF DEFINED(HORSE_PROVIDER_NGHTTP2)}
   Horse.Provider.Nghttp2,
 
-// Horse.pas — THorseProvider type alias
-{$ELSEIF DEFINED(HORSE_NGHTTP2)}
+// Horse.pas — THorseProvider type alias chain (parallel structure)
+{$ELSEIF DEFINED(HORSE_PROVIDER_NGHTTP2)}
   THorseProvider = Horse.Provider.Nghttp2.THorseProviderNghttp2;
 ```
 
-Users activate it with `{$DEFINE HORSE_NGHTTP2}` in project options.
+Users activate it with `{$DEFINE HORSE_PROVIDER_NGHTTP2}` in project options. If you later add cross-product units (Application-type wrappers — VCL host form, Windows Service base class, Linux daemon helper), follow the `Horse.Provider.CrossSocket.*` pattern: one unit per `HORSE_APPTYPE_*` combination, each delegating to the same transport infrastructure. See the five cross-product CrossSocket units for the worked example.
 
 ---
 

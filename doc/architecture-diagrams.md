@@ -31,7 +31,7 @@ flowchart TD
     end
 
     %% ── CrossSocket path ───────────────────────────────────────────────────
-    subgraph CS["🟢  Horse + CrossSocket  ({$DEFINE HORSE_CROSSSOCKET})"]
+    subgraph CS["🟢  Horse + CrossSocket  ({$DEFINE HORSE_PROVIDER_CROSSSOCKET}, legacy alias: HORSE_CROSSSOCKET)"]
         direction TB
         CS_ACCEPT["TCrossHttpServer\nIOCP (Windows) · epoll (Linux) · kqueue (macOS)\n────────────────────\nasync I/O event on IO thread pool\n4–16 threads regardless of connection count"]
         CS_VALIDATE{"TRequestBridge.Populate\nvalidates before touching the pool\n────────────────────\nmethod · host · smuggling · size · URL length"}
@@ -152,31 +152,43 @@ flowchart TD
 
 ---
 
-## 5. Activation — single compiler define
+## 5. Activation — the three-axis define model (PATCH-HORSE-2)
+
+PATCH-HORSE-2 replaces the original single `HORSE_CROSSSOCKET` switch with three orthogonal namespaces. Legacy define names (`HORSE_CROSSSOCKET`, `HORSE_VCL`, `HORSE_DAEMON`, `HORSE_LCL`, `HORSE_APACHE`, `HORSE_ISAPI`, `HORSE_CGI`, `HORSE_FCGI`) continue to work — an alias block at the top of `Horse.pas` translates them.
 
 ```mermaid
 flowchart TD
-    DEFINE{"{$DEFINE HORSE_CROSSSOCKET}\nset in project options?"}
+    START["Project defines\n(in .dproj / .lpi or via {$DEFINE})"]
 
-    subgraph NO["Without define  (default)"]
+    subgraph AXES["Three orthogonal axes"]
         direction TB
-        N1["Horse.pas uses clause:\nHorse.Provider.Console\nHorse.Provider.Daemon\n..."]
-        N2["THorseProvider =\nTHorseProviderConsole\n(Indy / web-broker stack)"]
-        N3["All CrossSocket units\nexcluded from compilation\nzero binary size impact"]
-        N1 --> N2 --> N3
+        A["Axis A · Provider\n(HTTP transport)\n────────────────────\nHORSE_PROVIDER_CROSSSOCKET\nHORSE_PROVIDER_MORMOT (reserved)\n────────────────────\n(no define = Indy on Delphi,\n fphttpserver on FPC)"]
+        B["Axis B · Application type\n(binary shape)\n────────────────────\nHORSE_APPTYPE_VCL\nHORSE_APPTYPE_DAEMON\nHORSE_APPTYPE_LCL\n────────────────────\n(no define = Console / HTTPApplication)"]
+        C["Axis C · Host-managed\n(web server owns the socket)\n────────────────────\nHORSE_HOST_APACHE\nHORSE_HOST_ISAPI\nHORSE_HOST_CGI\nHORSE_HOST_FCGI"]
     end
 
-    subgraph YES["With define"]
+    CHAIN["Horse.pas two-stage selection chain\n────────────────────\nStage 1: HORSE_HOST_* wins outright\n(Axis A ignored — host owns the socket)\n────────────────────\nStage 2: compose Axis A × Axis B\n(self-hosted — Provider + lifecycle wrapper)"]
+
+    subgraph UNIT["Concrete Provider unit selected"]
         direction TB
-        Y1["Horse.pas uses clause:\nHorse.Provider.CrossSocket"]
-        Y2["THorseProvider =\nTHorseProviderCrossSocket\n(IOCP / epoll / kqueue)"]
-        Y3["All existing Horse middleware\n(JWT · CORS · Jhonson · Logger ...)\nwork identically — zero changes needed\nthey only call THorseRequest / THorseResponse API"]
-        Y1 --> Y2 --> Y3
+        U1["Horse.Provider.CrossSocket\n(Console — Axis A only)"]
+        U2["Horse.Provider.CrossSocket.VCL\n(A + APPTYPE_VCL)"]
+        U3["Horse.Provider.CrossSocket.Daemon\n(A + APPTYPE_DAEMON on Delphi)\n────────────────────\n{$IFDEF MSWINDOWS}\n  THorseCrossSocketService\n{$ELSE}\n  THorseCrossSocketLinuxDaemonApp\n{$ENDIF}\nOne unit, two helpers"]
+        U4["Horse.Provider.CrossSocket.FPC.Daemon\nHorse.Provider.CrossSocket.FPC.LCL\nHorse.Provider.CrossSocket.FPC.HTTPApplication\n(FPC variants)"]
     end
 
-    DEFINE -->|No| NO
-    DEFINE -->|Yes| YES
+    FATAL["{$MESSAGE FATAL}\n────────────────────\nOnly fires for architecturally\nimpossible combinations:\nHORSE_PROVIDER_* + HORSE_HOST_*"]
+
+    BC["G1–G8 BACKWARDS-COMPATIBILITY CONTRACT\n────────────────────\nEvery existing .dproj / .lpi compiles unchanged.\nLegacy aliases translate to the new namespaces.\nMiddleware code is untouched.\nNo provider class renamed or removed."]
+
+    START --> AXES
+    AXES --> CHAIN
+    CHAIN --> UNIT
+    CHAIN -.->|invalid combo| FATAL
+    UNIT --> BC
 ```
+
+The selected concrete Provider class is assigned to `THorseProvider` via a parallel type-alias chain with the same structure.
 
 ---
 

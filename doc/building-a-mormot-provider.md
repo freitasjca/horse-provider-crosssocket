@@ -1226,19 +1226,19 @@ end.
 
 ### Step 7 — Register the provider in `Horse.pas`
 
-Add a new `{$ELSEIF}` branch:
+PATCH-HORSE-2 reserves **`HORSE_PROVIDER_MORMOT`** as the canonical define for this provider (listed in the *reserved* column of the three-axis table). Add the new `{$ELSEIF}` branch under the Stage 2 (self-hosted) Provider selection:
 
 ```pascal
-// Horse.pas — uses clause
-{$ELSEIF DEFINED(HORSE_MORMOT)}
+// Horse.pas — uses clause (Stage 2)
+{$ELSEIF DEFINED(HORSE_PROVIDER_MORMOT)}
   Horse.Provider.Mormot,
 
-// Horse.pas — THorseProvider type alias
-{$ELSEIF DEFINED(HORSE_MORMOT)}
+// Horse.pas — THorseProvider type alias chain (parallel structure)
+{$ELSEIF DEFINED(HORSE_PROVIDER_MORMOT)}
   THorseProvider = Horse.Provider.Mormot.THorseProviderMormot;
 ```
 
-Users activate it with `{$DEFINE HORSE_MORMOT}` in project options.
+Users activate it with `{$DEFINE HORSE_PROVIDER_MORMOT}` in project options. Optionally add a legacy alias `HORSE_MORMOT` in the alias block at the top of `Horse.pas` if you want to ship an informal short name. Cross-product Application-type wrappers (VCL host, Windows Service, Linux daemon) follow the `Horse.Provider.CrossSocket.*` pattern — see the five worked examples there.
 
 ---
 
@@ -1425,7 +1425,7 @@ For the surface each official Horse middleware touches and the mechanism that sa
 program HorseMormotTestServer;
 
 {$APPTYPE CONSOLE}
-{$DEFINE HORSE_MORMOT}
+{$DEFINE HORSE_PROVIDER_MORMOT}   // canonical (PATCH-HORSE-2 namespace)
 
 uses
   Horse;

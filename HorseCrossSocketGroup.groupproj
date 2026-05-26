@@ -21,6 +21,15 @@
         <Projects Include="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpClient\HttpClient.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="samples\tests\Delphi\Console\HorseCSConsoleTestServer.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="samples\tests\Delphi\LinuxDaemon\HorseCSLinuxDaemonTestServer.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="samples\tests\Delphi\WinService\HorseCSServiceTestServer.dproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -83,14 +92,41 @@
     <Target Name="HttpClient:Make">
         <MSBuild Projects="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpClient\HttpClient.dproj" Targets="Make"/>
     </Target>
+    <Target Name="HorseCSConsoleTestServer">
+        <MSBuild Projects="samples\tests\Delphi\Console\HorseCSConsoleTestServer.dproj"/>
+    </Target>
+    <Target Name="HorseCSConsoleTestServer:Clean">
+        <MSBuild Projects="samples\tests\Delphi\Console\HorseCSConsoleTestServer.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseCSConsoleTestServer:Make">
+        <MSBuild Projects="samples\tests\Delphi\Console\HorseCSConsoleTestServer.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseCSLinuxDaemonTestServer">
+        <MSBuild Projects="samples\tests\Delphi\LinuxDaemon\HorseCSLinuxDaemonTestServer.dproj"/>
+    </Target>
+    <Target Name="HorseCSLinuxDaemonTestServer:Clean">
+        <MSBuild Projects="samples\tests\Delphi\LinuxDaemon\HorseCSLinuxDaemonTestServer.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseCSLinuxDaemonTestServer:Make">
+        <MSBuild Projects="samples\tests\Delphi\LinuxDaemon\HorseCSLinuxDaemonTestServer.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseCSServiceTestServer">
+        <MSBuild Projects="samples\tests\Delphi\WinService\HorseCSServiceTestServer.dproj"/>
+    </Target>
+    <Target Name="HorseCSServiceTestServer:Clean">
+        <MSBuild Projects="samples\tests\Delphi\WinService\HorseCSServiceTestServer.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseCSServiceTestServer:Make">
+        <MSBuild Projects="samples\tests\Delphi\WinService\HorseCSServiceTestServer.dproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="Console;HorseProviderCrossSocket;HorseCSTestClient;HorseCSTestServer;HttpServer;HttpClient"/>
+        <CallTarget Targets="Console;HorseProviderCrossSocket;HorseCSTestClient;HorseCSTestServer;HttpServer;HttpClient;HorseCSConsoleTestServer;HorseCSLinuxDaemonTestServer;HorseCSServiceTestServer"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="Console:Clean;HorseProviderCrossSocket:Clean;HorseCSTestClient:Clean;HorseCSTestServer:Clean;HttpServer:Clean;HttpClient:Clean"/>
+        <CallTarget Targets="Console:Clean;HorseProviderCrossSocket:Clean;HorseCSTestClient:Clean;HorseCSTestServer:Clean;HttpServer:Clean;HttpClient:Clean;HorseCSConsoleTestServer:Clean;HorseCSLinuxDaemonTestServer:Clean;HorseCSServiceTestServer:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="Console:Make;HorseProviderCrossSocket:Make;HorseCSTestClient:Make;HorseCSTestServer:Make;HttpServer:Make;HttpClient:Make"/>
+        <CallTarget Targets="Console:Make;HorseProviderCrossSocket:Make;HorseCSTestClient:Make;HorseCSTestServer:Make;HttpServer:Make;HttpClient:Make;HorseCSConsoleTestServer:Make;HorseCSLinuxDaemonTestServer:Make;HorseCSServiceTestServer:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>
