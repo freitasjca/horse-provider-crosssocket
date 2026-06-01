@@ -343,13 +343,11 @@ The [Delphi‑Cross‑Socket](https://github.com/winddriver/Delphi-Cross-Socket)
    | `CnPack\Crypto\CnPemUtils.pas` | PEM encoding / decoding |
    | `CnPack\Crypto\CnFloat.pas` | Floating‑point helpers used by cipher code |
 
-**A community fork** ([github.com/freitasjca/Delphi-Cross-Socket](https://github.com/freitasjca/Delphi-Cross-Socket)) has already completed steps 1,2 and 3: it ships a `boss.json` with `"version": "1.0.0"` and the `mainsrc`/`browsingpath` fields correctly declared, and it adds FPC 3.3.1 support with zero source changes to the original library. This fork is what `horse-provider-crosssocket` currently depends on. The entire stack is therefore installable today with:
+**Current install model** — `horse-provider-crosssocket` no longer pulls Delphi-Cross-Socket through Boss. Delphi-Cross-Socket is installed manually (clone the upstream repo, add search paths), the same way `horse-provider-mormot` documents the mORMot2 install. CnPack is fetched separately from [`cnpack/cnvcl`](https://github.com/cnpack/cnvcl) (or, for the cherry-pick variant, just the 15 files listed above). This matches the convention already used for mORMot2 in `horse-provider-mormot`.
 
-```
-boss install github.com/freitasjca/horse-provider-crosssocket
-```
+**Why the manual path now?** The upstream `winddriver/Delphi-Cross-Socket` is actively maintained and changes frequently. A Boss-installable wrapper inevitably drifts behind upstream between fork syncs, and three previously fork-only bug fixes (`PATCH-IOCP-1` shutdown cascade, the `TCrossHttpClient` zero-body parser hang, and the `_OnBodyEnd` nil-guard) have already been merged into upstream as of 2026-Q2 — they no longer justify maintaining a fork as the default install target. The community fork ([github.com/freitasjca/Delphi-Cross-Socket](https://github.com/freitasjca/Delphi-Cross-Socket)) remains a **supported alternative** for users who need mTLS server-mode APIs (`SetCACertificate(File)` + `SetVerifyPeer(Boolean)`, shipped pre-applied in fork release `v1.0.3`) or prefer one fewer clone, with the explicit trade-off that the fork lags upstream commits between syncs.
 
-The ideal long‑term outcome is for the **original repository** to adopt the `boss.json` so there is a single canonical source. The timeline for that depends on the original repository admin. Until then, the fork is the supported path.
+The ideal long-term outcome is for the **original repository** to merge an upstream PR with the mTLS additions, after which the fork's only remaining differentiator (bundled CnPack convenience) becomes a much smaller value proposition. An upstream mTLS PR is in preparation.
 
 ---
 

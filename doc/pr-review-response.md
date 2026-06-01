@@ -150,7 +150,7 @@ The reviewer's suggested fix and the actual fix are line-for-line identical:
 | Reviewer suggested | Implemented |
 |---|---|
 | `if IsConsole then while FRunning do FStopEvent.WaitFor(INFINITE);` | Same, plus `FreeAndNil(FStopEvent)` after the loop and event creation guarded by `Assigned`. |
-| `StopListen` sets `FRunning := False` and signals the event before `FServer.Stop` | `StopListen` sets `FRunning := False`, calls `FServer.Stop` (which joins workers), then signals the event. The order matters: the main thread must not wake until workers have exited, otherwise `FinalizeUnits` races with in-flight requests. |
+| `StopListen` sets `FRunning := False` and signals the event before `FServer.Stop` | `StopListen` sets `FRunning := False`, calls `FServer.Stop` (which joins workers), then signals the event. The order matters: the main thread must not wake until workers have exited, otherwise `FinalizeUnits` races with active requests. |
 
 ---
 

@@ -59,11 +59,13 @@ uses
   System.StrUtils,
   System.Classes,
   System.SyncObjs,
+  System.Diagnostics,    // TStopwatch — high-resolution timing
+  System.TimeSpan,
   Net.CrossHttpClient,
   Net.CrossHttpParams;
 
 const
-  BASE_URL            = 'http://127.0.0.1:9010';
+  BASE_URL = 'http://127.0.0.1:9010'; // 'http://ipv4.fiddler:9010';   // was: 'http://127.0.0.1:9010'  - For Fiddler catch local
   TIMEOUT_MS          = 8000;
   LARGE_RESPONSE_SIZE = 65536; // must match server constant
   LARGE_BODY_SIZE     = 65536; // bytes sent in test 16
@@ -71,11 +73,49 @@ const
   BURST_COUNT         = 8;     // parallel requests in test 29
   RAPID_SEQ_COUNT     = 5;     // sequential requests in test 30
 
-// ── Global counters ───────────────────────────────────────────────────────────
+// ── Global counters & timing ──────────────────────────────────────────────────
 
 var
-  GPassCount: Integer = 0;
-  GFailCount: Integer = 0;
+  GPassCount:        Integer = 0;
+  GFailCount:        Integer = 0;
+  // Wall-clock stopwatch covering the whole RunTests run. Used to time each
+  // Section relative to the previous one so a long-running test is obvious
+  // when scanning the output. Started in main begin/end, never reset.
+  GGlobalSW:         TStopwatch;
+  GLastSectionTicks: Int64 = 0;
+
+// ── Timing helpers ────────────────────────────────────────────────────────────
+
+{ Format a millisecond delta like " 12.3 ms" — fixed width so the timing
+  column lines up in the output. }
+function FmtMs(const AMilliseconds: Double): string;
+begin
+  Result := Format('%7.1f ms', [AMilliseconds]);
+end;
+
+{ Print a request-level timing breakdown right under the matching PASS/FAIL
+  block. Columns:
+    server  → time from "DoRequest dispatched" to "response callback fired"
+              (network + server pipeline; this is what to investigate if slow)
+    client  → time from "callback fired" to "synchronous wait released"
+              (event signalling + result marshalling; should be sub-millisecond)
+    total   → server + client (what the test step actually cost)
+  Timeouts print "TIMEOUT" in the server column. }
+procedure ReportTiming(
+  const ALabel:       string;
+  const AServerMs:    Double;
+  const AClientMs:    Double;
+  const ATimedOut:    Boolean
+);
+begin
+  if ATimedOut then
+    Writeln(Format('  TIME  %-22s server: TIMEOUT (>%d ms)  client: %s',
+      [ALabel, TIMEOUT_MS, FmtMs(AClientMs)]))
+  else
+    Writeln(Format('  TIME  %-22s server: %s  client: %s  total: %s',
+      [ALabel, FmtMs(AServerMs), FmtMs(AClientMs),
+       FmtMs(AServerMs + AClientMs)]));
+end;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -135,9 +175,23 @@ type
     Body:       string;
     Response:   ICrossHttpClientResponse;
     TimedOut:   Boolean;
+    // Timing (filled by DoSync / DoSyncMP):
+    //   ServerMs — request dispatched → response callback fired
+    //              (network round-trip + server-side pipeline)
+    //   ClientMs — callback fired → synchronous wait released
+    //              (event signalling + result marshalling; ~0 normally)
+    ServerMs:   Int64;
+    ClientMs:   Int64;
   end;
 
-{ TBytes body overload — suitable for GET/PUT/POST/PATCH/DELETE/HEAD. }
+{ TBytes body overload — suitable for GET/PUT/POST/PATCH/DELETE/HEAD.
+
+  Timing instrumentation:
+    LSWReq starts immediately before DoRequest.
+    LCallbackTicks is set inside the callback (server round-trip complete).
+    LSWReq is stopped after WaitFor returns (full sync wait complete).
+  Caller reads AResult.ServerMs / AResult.ClientMs to split the latency
+  into "server pipeline + network" vs "TEvent wake + result marshalling". }
 function DoSync(
   const AClient:  TCrossHttpClient;
   const AMethod:  string;
@@ -147,15 +201,20 @@ function DoSync(
   out   AResult:  TReqResult
 ): Boolean;
 var
-  LEvent:  TEvent;
-  LResult: TReqResult;
+  LEvent:          TEvent;
+  LResult:         TReqResult;
+  LSWReq:          TStopwatch;
+  LCallbackTicks:  Int64;
 begin
-  LResult    := Default(TReqResult);
-  LEvent     := TEvent.Create(nil, True, False, '');
+  LResult        := Default(TReqResult);
+  LEvent         := TEvent.Create(nil, True, False, '');
+  LCallbackTicks := 0;
   try
+    LSWReq := TStopwatch.StartNew;
     AClient.DoRequest(AMethod, AUrl, AHeaders, ABody, nil, nil,
       procedure(const AResp: ICrossHttpClientResponse)
       begin
+        LCallbackTicks := LSWReq.ElapsedMilliseconds;
         if AResp <> nil then
         begin
           LResult.StatusCode := AResp.StatusCode;
@@ -165,14 +224,27 @@ begin
         LEvent.SetEvent;
       end);
     LResult.TimedOut := (LEvent.WaitFor(TIMEOUT_MS) <> wrSignaled);
+    LSWReq.Stop;
+    if LResult.TimedOut then
+    begin
+      LResult.ServerMs := 0;                          // unknown
+      LResult.ClientMs := LSWReq.ElapsedMilliseconds; // full wait elapsed
+    end
+    else
+    begin
+      LResult.ServerMs := LCallbackTicks;
+      LResult.ClientMs := LSWReq.ElapsedMilliseconds - LCallbackTicks;
+    end;
   finally
     LEvent.Free;
   end;
   AResult := LResult;
   Result  := not AResult.TimedOut;
+  ReportTiming(AMethod + ' ' + AUrl, LResult.ServerMs, LResult.ClientMs,
+    LResult.TimedOut);
 end;
 
-{ multipart/form-data overload. }
+{ multipart/form-data overload. Same timing scheme as DoSync. }
 function DoSyncMP(
   const AClient:  TCrossHttpClient;
   const AUrl:     string;
@@ -181,15 +253,20 @@ function DoSyncMP(
   out   AResult:  TReqResult
 ): Boolean;
 var
-  LEvent:  TEvent;
-  LResult: TReqResult;
+  LEvent:          TEvent;
+  LResult:         TReqResult;
+  LSWReq:          TStopwatch;
+  LCallbackTicks:  Int64;
 begin
-  LResult  := Default(TReqResult);
-  LEvent   := TEvent.Create(nil, True, False, '');
+  LResult        := Default(TReqResult);
+  LEvent         := TEvent.Create(nil, True, False, '');
+  LCallbackTicks := 0;
   try
+    LSWReq := TStopwatch.StartNew;
     AClient.DoRequest('POST', AUrl, AHeaders, ABody, nil, nil,
       procedure(const AResp: ICrossHttpClientResponse)
       begin
+        LCallbackTicks := LSWReq.ElapsedMilliseconds;
         if AResp <> nil then
         begin
           LResult.StatusCode := AResp.StatusCode;
@@ -199,11 +276,24 @@ begin
         LEvent.SetEvent;
       end);
     LResult.TimedOut := (LEvent.WaitFor(TIMEOUT_MS) <> wrSignaled);
+    LSWReq.Stop;
+    if LResult.TimedOut then
+    begin
+      LResult.ServerMs := 0;
+      LResult.ClientMs := LSWReq.ElapsedMilliseconds;
+    end
+    else
+    begin
+      LResult.ServerMs := LCallbackTicks;
+      LResult.ClientMs := LSWReq.ElapsedMilliseconds - LCallbackTicks;
+    end;
   finally
     LEvent.Free;
   end;
   AResult := LResult;
   Result  := not AResult.TimedOut;
+  ReportTiming('POST ' + AUrl + ' (multipart)',
+    LResult.ServerMs, LResult.ClientMs, LResult.TimedOut);
 end;
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -266,10 +356,20 @@ var
   LSeqMarker:     string;
   J:              Integer;
 
+  { Section header. Prints the elapsed wall-clock time since the previous
+    Section call so a slow test stands out without having to compare
+    absolute timestamps. The very first call shows "0.0 ms since start". }
   procedure Section(const ATitle: string);
+  var
+    LNowTicks: Int64;
+    LSince:    Int64;
   begin
+    LNowTicks := GGlobalSW.ElapsedMilliseconds;
+    LSince    := LNowTicks - GLastSectionTicks;
+    GLastSectionTicks := LNowTicks;
     Writeln('');
-    Writeln('── ' + ATitle);
+    Writeln(Format('── %s   (+%d ms since previous test, %d ms total)',
+      [ATitle, LSince, LNowTicks]));
   end;
 
   // ── Test 18 helper — closure factory ────────────────────────────────────────
@@ -316,6 +416,7 @@ var
   end;
 
 begin
+
   // ── 01  Health check ─────────────────────────────────────────────────────────
   Section('01  GET /ping');
   DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
@@ -416,6 +517,7 @@ begin
   Check('status 200',                  R.StatusCode = 200,         IntToStr(R.StatusCode));
   Check('session echoed as "abc123"',  Pos('"abc123"', R.Body) > 0, R.Body);
   Check('user echoed as "tester"',     Pos('"tester"', R.Body) > 0, R.Body);
+
 
   // ── 12  Multipart file upload ────────────────────────────────────────────────
   Section('12  POST /upload  (multipart/form-data, file field)');
@@ -683,6 +785,7 @@ begin
   Check('RemoteAddr non-empty',
     Pos('"remoteAddrNonEmpty":true', R.Body) > 0, R.Body);
 
+
   // ── 26  OPTIONS /raw/cors  (Horse.CORS pre-flight pattern) ───────────────────
   // This is the exact shape Horse.CORS.pas uses:
   //   if Req.RawWebRequest.Method = 'OPTIONS' then ...
@@ -864,7 +967,13 @@ var
 begin
   Writeln('[HorseCSTest] Client — target: ' + BASE_URL);
   Writeln('[HorseCSTest] Ensure HorseCSTestServer is running before proceeding.');
+  Writeln('[HorseCSTest] Timing: each test step prints (server / client) latency.');
+  Writeln('[HorseCSTest]   server = network round-trip + server pipeline');
+  Writeln('[HorseCSTest]   client = TEvent wake + result marshalling (should be ~0)');
   Writeln('');
+
+  GGlobalSW         := TStopwatch.StartNew;
+  GLastSectionTicks := 0;
 
   Client := TCrossHttpClient.Create(2 {IoThreads});
   try
@@ -879,9 +988,12 @@ begin
     Client.Free;
   end;
 
+  GGlobalSW.Stop;
+
   Writeln('');
-  Writeln(Format('[HorseCSTest] %d passed, %d failed  (total %d)',
-    [GPassCount, GFailCount, GPassCount + GFailCount]));
+  Writeln(Format('[HorseCSTest] %d passed, %d failed  (total %d) in %d ms wall clock',
+    [GPassCount, GFailCount, GPassCount + GFailCount,
+     GGlobalSW.ElapsedMilliseconds]));
   if GFailCount = 0 then
     Writeln('[HorseCSTest] All tests PASSED.')
   else

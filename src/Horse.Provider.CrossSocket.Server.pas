@@ -126,15 +126,25 @@ type
     FRequestCallback: TServerRequestCallback;
 
     procedure ApplyConfig;
-    // [FIX-CS-1a] Method-of-object handler assigned to FServer.OnRequest.
-    // TCrossHttpRequestEvent = procedure(const Sender: TObject;
-    //   const ARequest: ICrossHttpRequest; const AResponse: ICrossHttpResponse;
-    //   var AHandled: Boolean) of object;
+    // [FIX-CS-1a] [PATCH-CS-API-1] Method-of-object handler assigned to
+    // FServer.OnRequest.  TCrossHttpRequestEvent signature (Delphi-Cross-Socket
+    // upstream ≥ 2026-05) added a new AConnection: ICrossHttpConnection as the
+    // second parameter:
+    //   procedure(const Sender: TObject;
+    //     const AConnection: ICrossHttpConnection;          { added upstream }
+    //     const ARequest: ICrossHttpRequest;
+    //     const AResponse: ICrossHttpResponse;
+    //     var AHandled: Boolean) of object;
+    // We don't use AConnection here — ARequest/AResponse already carry every-
+    // thing the Horse pipeline needs (the connection is reachable from ARequest
+    // via ARequest.Connection if ever required) — but the parameter must be
+    // present for the method signature to match TCrossHttpRequestEvent.
     procedure InternalOnRequest(
-      const Sender:   TObject;
-      const ARequest: ICrossHttpRequest;
-      const AResponse: ICrossHttpResponse;
-      var   AHandled: Boolean
+      const Sender:      TObject;
+      const AConnection: ICrossHttpConnection;
+      const ARequest:    ICrossHttpRequest;
+      const AResponse:   ICrossHttpResponse;
+      var   AHandled:    Boolean
     );
   public
     constructor Create(const AConfig: THorseCrossSocketConfig); overload;
@@ -284,15 +294,19 @@ begin
   end;
 end;
 
-// [FIX-CS-1a] Method-of-object bridge.
-// TCrossHttpRequestEvent fires on TCrossHttpServer.OnRequest.
-// We forward to FRequestCallback (set by the provider) and mark AHandled
-// so CrossSocket knows the request has been taken over.
+// [FIX-CS-1a] [PATCH-CS-API-1] Method-of-object bridge.
+// TCrossHttpRequestEvent fires on TCrossHttpServer.OnRequest.  Upstream added
+// AConnection: ICrossHttpConnection as the new second parameter; we accept it
+// for signature compatibility but don't forward it — Horse middleware already
+// reaches everything it needs through Req/Res.
+// We forward to FRequestCallback (set by the provider) and mark AHandled so
+// CrossSocket knows the request has been taken over.
 procedure THorseCrossSocketServer.InternalOnRequest(
-  const Sender:    TObject;
-  const ARequest:  ICrossHttpRequest;
-  const AResponse: ICrossHttpResponse;
-  var   AHandled:  Boolean
+  const Sender:      TObject;
+  const AConnection: ICrossHttpConnection;
+  const ARequest:    ICrossHttpRequest;
+  const AResponse:   ICrossHttpResponse;
+  var   AHandled:    Boolean
 );
 begin
   AHandled := True;   // always claim the request

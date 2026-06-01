@@ -45,14 +45,12 @@ uses
   Horse.Provider.CrossSocket.WorkerPool in '..\..\..\..\src\Horse.Provider.CrossSocket.WorkerPool.pas',
   MyHorseService in 'MyHorseService.pas' {HorseCSTestService: TService};
 
-{$R *.RES}
+{$R *.res}
 
 begin
   // The standard Delphi Service Application boilerplate. The service class
   // (declared in MyHorseService.pas) inherits from THorseCrossSocketService
   // which inherits from Vcl.SvcMgr.TService.
-  // Windows 2003 Server requires StartServiceCtrlDispatcher to be
-
   if not Application.DelayInitialize or Application.Installing then
     Application.Initialize;
   Application.CreateForm(THorseCSTestService, HorseCSTestService);
