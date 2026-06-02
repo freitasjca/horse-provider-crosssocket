@@ -121,22 +121,22 @@ flowchart TD
 flowchart TD
     subgraph REQ["Inbound request validation  (TRequestBridge.Populate)"]
         direction TB
-        V1{"Method allowed?\nCONNECT · TRACE → 405"}
-        V2{"Host present\nand printable? → 400"}
-        V3{"Content-Length AND\nTransfer-Encoding both set?\nRFC 7230 §3.3.3 → 400"}
-        V4{"URL length\n≤ 8 KB? → 414"}
-        V5{"Header count ≤ 100\nname ≤ 256 bytes\nvalue ≤ 8 KB? → 431 / 400"}
-        V6{"Body size\n≤ MaxBodySize? → 413"}
+        V1{"Method in allowlist?\nCONNECT · TRACE → 405"}
+        V2{"URL length\n≤ 8 KB? → 400"}
+        V3{"Host present\nand printable? → 400"}
+        V4{"Content-Length AND\nTransfer-Encoding both set?\nRFC 7230 §3.3.3 → 400"}
+        V5{"Header count\n≤ 100? → 400\n(oversized name/value: skipped,\nnot rejected)"}
         VOK["rvOK — enter pool + pipeline"]
-        VERR["rvBadRequest / rvMethodNotAllowed\nSendError — pool never acquired\nno middleware entered"]
+        VERR["rvBadRequest / rvMethodNotAllowed\nSendError (400 / 405) — pool never acquired\nno middleware entered"]
+        NOTE["Body size limit is enforced at the\nCrossSocket transport layer — before\nPopulate is called; not checked here"]
 
-        V1 -->|pass| V2 -->|pass| V3 -->|pass| V4 -->|pass| V5 -->|pass| V6 -->|pass| VOK
+        V1 -->|pass| V2 -->|pass| V3 -->|pass| V4 -->|pass| V5 -->|pass| VOK
         V1 -->|fail| VERR
         V2 -->|fail| VERR
         V3 -->|fail| VERR
         V4 -->|fail| VERR
         V5 -->|fail| VERR
-        V6 -->|fail| VERR
+        VOK -.-> NOTE
     end
 
     subgraph RESP["Outbound response hardening  (TResponseBridge.Flush)"]
