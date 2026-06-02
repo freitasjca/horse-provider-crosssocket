@@ -10,7 +10,7 @@ The compatibility surface is:
 |---|---|
 | `Req.RawWebRequest.*` | PATCH-REQ-8 hybrid adapter (`TCrossSocketWebRequest` → `IHorseRawRequest` → `ICrossHttpRequest`) |
 | `Res.RawWebResponse.SetCustomHeader` | `TInterfacedWebResponse` inherited `CustomHeaders: TStrings` (merged by `TResponseBridge.CopyHeaders`) |
-| `Res.RawWebResponse.Content` / `.ContentType` | COMPAT-1 fallback in `TResponseBridge.Flush` / `WriteBody` |
+| `Res.RawWebResponse.Content` / `.ContentType` | **Dead path today.** `TInterfacedWebResponse.SetContent` and `SetStringVariable` are no-op stubs — writes are silently discarded; the COMPAT-1 bridge hook reads `''`. Use `Res.Send` / `Res.ContentType` instead. COMPAT-1 code in `WriteBody` / `Flush` is a forward hook for if the stubs are made to forward in the future. |
 | `Req.Headers / Cookie / Query / Body / ContentType / Method / MethodType / Host / PathInfo / RemoteAddr` | PATCH-REQ-2/3/4/5/8/9/10 nil-guarded accessors with shadow fields |
 | `Res.Send / Status / ContentType / AddHeader / RedirectTo / SendFile / Download` | PATCH-RES-1/4 nil-guarded setters with shadow fields |
 
@@ -21,7 +21,7 @@ The compatibility surface is:
 | Middleware | Surface used | Mechanism | Test |
 |---|---|---|---|
 | **horse-cors** | `Req.RawWebRequest.Method`; `Res.RawWebResponse.SetCustomHeader` (×5) | PATCH-REQ-8 (Method via adapter); CopyHeaders merge of `TInterfacedWebResponse.CustomHeaders` | Test 30 (`HorseCSTestClient.dpr` — `OPTIONS /cors/check` → 204 + ACAO header; `GET /cors/check` → route body) |
-| **horse-jhonson** | `Req.RawWebRequest.ContentType`; `Res.RawWebResponse.Content`; `Res.RawWebResponse.ContentType` | PATCH-REQ-8 (request adapter delegates ContentType); COMPAT-1 fallback (response shadow precedence with adapter pickup) | Test 32 (`COMPAT-1 shadow-field precedence`) |
+| **horse-jhonson** | `Req.RawWebRequest.ContentType` (read); `Res.Send` / `Res.ContentType` (write — public API path) | PATCH-REQ-8 (request adapter delegates ContentType to `ICrossHttpRequest.ContentType`); PATCH-RES-4 shadow fields for `Send`/`ContentType`. **If** horse-jhonson writes via `Res.RawWebResponse.Content` / `.ContentType` directly, those writes are silently dropped on CrossSocket (stubs) and it would be incompatible — use the public `Res.Send` / `Res.ContentType` API. | Test 32 (`COMPAT-1 shadow-field precedence` — shadow field from `Res.Send` wins over `RawWebResponse.Content` write, which is a no-op stub) |
 | **horse-jwt** | `Req.Headers['Authorization']` | PATCH-REQ-3 nil-guarded `Headers` accessor; populated by request bridge | Indirect — covered by every test that uses `Req.Headers` (Tests 21, 27 for header round-trip) |
 | **horse-basic-authenticator** | `Req.Headers['Authorization']` | Same as `horse-jwt` | Indirect — same as `horse-jwt` |
 | **horse-logger** | `Req.RawWebRequest.Method` / `.PathInfo` / `.Host` / `.RemoteAddr` | PATCH-REQ-8 adapter forwards all four to `ICrossHttpRequest` | Test 27 (`PATCH-REQ-8` adapter — verifies method, host, pathInfo, headers, remoteAddr) |
@@ -55,7 +55,9 @@ end;
 
 The same pattern applies to `RawWebResponse` via PATCH-RES-6 → `TCrossSocketWebResponse` → `IHorseRawResponse` → `TCrossSocketRawResponse`.
 
-The only abstract methods that remain stubs on `TInterfacedWebResponse` are the response-write side (`SetContent`, `SetStatusCode`, `SetContentStream`, `SetStringVariable`, etc.). These intentionally don't forward — `TResponseBridge.Flush` reads from `THorseResponse`'s shadow fields (PATCH-RES-4), not from the adapter — so middleware that writes via `Res.RawWebResponse.Content := X` should switch to `Res.Send(X)` (the public API). The COMPAT-1 fallback in the bridge picks up `RawWebResponse.Content` / `.ContentType` if a future change makes those stubs forward, but at present the recommended path is the public Horse API.
+The response-write side of `TInterfacedWebResponse` (`SetContent`, `SetStatusCode`, `SetContentStream`, `SetStringVariable`, etc.) are all no-op stubs — they discard writes. `TResponseBridge.Flush` reads from `THorseResponse`'s shadow fields (PATCH-RES-4), not from the adapter. Middleware that writes via `Res.RawWebResponse.Content := X` or `Res.RawWebResponse.ContentType := X` will have those writes silently dropped on CrossSocket — use `Res.Send(X)` / `Res.ContentType(X)` (the public Horse API) instead.
+
+The COMPAT-1 code in `WriteBody` and `Flush` checks `LRawRes.Content` / `LRawRes.ContentType` after the shadow fields are exhausted, as a forward hook for if those stubs are ever made to forward. Today they always return `''`, so COMPAT-1 for these two properties is dead. COMPAT-1 does NOT provide working compatibility for middleware that writes via `RawWebResponse.Content` or `.ContentType`.
 
 ---
 
@@ -78,7 +80,7 @@ A middleware needs review if it:
 - Writes via `Res.RawWebResponse.Content`, `.ContentType`, or `.StatusCode` directly — these are stubbed on `TInterfacedWebResponse` and silently dropped today. Switch to the public `Res.Send` / `Res.ContentType` / `Res.Status` API.
 - Calls `Res.RawWebResponse.SendResponse` for early flush — stubbed; use `Res.Send` instead.
 - Holds a long-lived reference to `Req.Body<TStream>` past the handler return — this is a use-after-free on CrossSocket. Copy the bytes; see `samples/Delphi/console/Console.dpr` `/echo` route.
-- Stores anonymous-method callbacks at unit scope — RTL finalisation will clear them while IO threads may still be active. Use `Listen`'s blocking pattern (PATCH-LISTEN-1) so finalisation doesn't run until `StopListen` has joined the IO threads.
+- Stores anonymous-method callbacks at unit scope — RTL finalisation will clear them while IO threads may still be active. Use the `Listen`-blocks-main-thread / `StopListen`-joins-IO-threads pattern (see `IsConsole` guard in `Horse.Provider.CrossSocket.pas` and the comment in `samples/Delphi/console/Console.dpr`) so finalisation doesn't run until IO threads have exited.
 
 ---
 
