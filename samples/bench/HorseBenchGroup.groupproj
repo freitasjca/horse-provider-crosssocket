@@ -1,0 +1,144 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{8B245B6B-0B65-48EB-8FE7-76B19CA84A0F}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="Client\HorseBenchClient.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\CrossSocket\HorseBenchCrossSocket.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\Indy\HorseBenchIndy.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\Mormot\HorseBenchMormot.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\RawCrossSocket\HorseBenchRawCrossSocket.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\RawMormot\HorseBenchRawMormot.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\Indy\HorseBenchIndy_diag.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\CrossSocket\HorseBenchCrossSocket_diag.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\Mormot\HorseBenchMormot_diag.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\RawIndy\HorseBenchRawIndy.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="HorseBenchClient">
+        <MSBuild Projects="Client\HorseBenchClient.dproj"/>
+    </Target>
+    <Target Name="HorseBenchClient:Clean">
+        <MSBuild Projects="Client\HorseBenchClient.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchClient:Make">
+        <MSBuild Projects="Client\HorseBenchClient.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchCrossSocket">
+        <MSBuild Projects="Servers\CrossSocket\HorseBenchCrossSocket.dproj"/>
+    </Target>
+    <Target Name="HorseBenchCrossSocket:Clean">
+        <MSBuild Projects="Servers\CrossSocket\HorseBenchCrossSocket.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchCrossSocket:Make">
+        <MSBuild Projects="Servers\CrossSocket\HorseBenchCrossSocket.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchIndy">
+        <MSBuild Projects="Servers\Indy\HorseBenchIndy.dproj"/>
+    </Target>
+    <Target Name="HorseBenchIndy:Clean">
+        <MSBuild Projects="Servers\Indy\HorseBenchIndy.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchIndy:Make">
+        <MSBuild Projects="Servers\Indy\HorseBenchIndy.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchMormot">
+        <MSBuild Projects="Servers\Mormot\HorseBenchMormot.dproj"/>
+    </Target>
+    <Target Name="HorseBenchMormot:Clean">
+        <MSBuild Projects="Servers\Mormot\HorseBenchMormot.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchMormot:Make">
+        <MSBuild Projects="Servers\Mormot\HorseBenchMormot.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchRawCrossSocket">
+        <MSBuild Projects="Servers\RawCrossSocket\HorseBenchRawCrossSocket.dproj"/>
+    </Target>
+    <Target Name="HorseBenchRawCrossSocket:Clean">
+        <MSBuild Projects="Servers\RawCrossSocket\HorseBenchRawCrossSocket.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchRawCrossSocket:Make">
+        <MSBuild Projects="Servers\RawCrossSocket\HorseBenchRawCrossSocket.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchRawMormot">
+        <MSBuild Projects="Servers\RawMormot\HorseBenchRawMormot.dproj"/>
+    </Target>
+    <Target Name="HorseBenchRawMormot:Clean">
+        <MSBuild Projects="Servers\RawMormot\HorseBenchRawMormot.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchRawMormot:Make">
+        <MSBuild Projects="Servers\RawMormot\HorseBenchRawMormot.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchIndy_diag">
+        <MSBuild Projects="Servers\Indy\HorseBenchIndy_diag.dproj"/>
+    </Target>
+    <Target Name="HorseBenchIndy_diag:Clean">
+        <MSBuild Projects="Servers\Indy\HorseBenchIndy_diag.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchIndy_diag:Make">
+        <MSBuild Projects="Servers\Indy\HorseBenchIndy_diag.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchCrossSocket_diag">
+        <MSBuild Projects="Servers\CrossSocket\HorseBenchCrossSocket_diag.dproj"/>
+    </Target>
+    <Target Name="HorseBenchCrossSocket_diag:Clean">
+        <MSBuild Projects="Servers\CrossSocket\HorseBenchCrossSocket_diag.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchCrossSocket_diag:Make">
+        <MSBuild Projects="Servers\CrossSocket\HorseBenchCrossSocket_diag.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchMormot_diag">
+        <MSBuild Projects="Servers\Mormot\HorseBenchMormot_diag.dproj"/>
+    </Target>
+    <Target Name="HorseBenchMormot_diag:Clean">
+        <MSBuild Projects="Servers\Mormot\HorseBenchMormot_diag.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchMormot_diag:Make">
+        <MSBuild Projects="Servers\Mormot\HorseBenchMormot_diag.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchRawIndy">
+        <MSBuild Projects="Servers\RawIndy\HorseBenchRawIndy.dproj"/>
+    </Target>
+    <Target Name="HorseBenchRawIndy:Clean">
+        <MSBuild Projects="Servers\RawIndy\HorseBenchRawIndy.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchRawIndy:Make">
+        <MSBuild Projects="Servers\RawIndy\HorseBenchRawIndy.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="HorseBenchClient;HorseBenchCrossSocket;HorseBenchIndy;HorseBenchMormot;HorseBenchRawCrossSocket;HorseBenchRawMormot;HorseBenchIndy_diag;HorseBenchCrossSocket_diag;HorseBenchMormot_diag;HorseBenchRawIndy"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="HorseBenchClient:Clean;HorseBenchCrossSocket:Clean;HorseBenchIndy:Clean;HorseBenchMormot:Clean;HorseBenchRawCrossSocket:Clean;HorseBenchRawMormot:Clean;HorseBenchIndy_diag:Clean;HorseBenchCrossSocket_diag:Clean;HorseBenchMormot_diag:Clean;HorseBenchRawIndy:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="HorseBenchClient:Make;HorseBenchCrossSocket:Make;HorseBenchIndy:Make;HorseBenchMormot:Make;HorseBenchRawCrossSocket:Make;HorseBenchRawMormot:Make;HorseBenchIndy_diag:Make;HorseBenchCrossSocket_diag:Make;HorseBenchMormot_diag:Make;HorseBenchRawIndy:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>
