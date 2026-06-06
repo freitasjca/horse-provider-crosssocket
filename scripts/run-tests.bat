@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 REM ============================================================================
-REM  run-tests.bat  —  Integration test runner for horse-provider-crosssocket
+REM  run-tests.bat  -  Integration test runner for horse-provider-crosssocket
 REM
 REM  Usage:
 REM    run-tests.bat [Win32|Win64] [Release|Debug]
@@ -51,43 +51,62 @@ if not exist "%CLIENT_EXE%" (
     exit /b 1
 )
 
-REM -- Kill any leftover server from a previous run ----------------------------
-
-tasklist /FI "IMAGENAME eq HorseCSTestServer.exe" 2>nul | find /I "HorseCSTestServer.exe" >nul
-if not errorlevel 1 (
-    echo [test] Killing leftover HorseCSTestServer.exe...
-    taskkill /F /IM HorseCSTestServer.exe /T >nul 2>&1
-    timeout /t 1 /nobreak >nul
-)
-
-REM -- Start server in background ----------------------------------------------
-
-echo [test] Starting server on port %TEST_PORT%...
-start "HorseCSTestServer" /B "%SERVER_EXE%"
-
-REM -- Wait for server to be ready (health-check with curl or PowerShell) ------
+REM -- Check if server is already running and healthy --------------------------
 REM
-REM  Tries GET /ping up to 10 times with 500 ms intervals (5 s total timeout).
+REM  If port TEST_PORT is already listening AND GET /ping returns 200, reuse
+REM  the existing instance - no kill, no restart, faster iteration.
+REM  Otherwise kill any leftover process and start fresh.
 
 set READY=0
-for /L %%I in (1,1,10) do (
-    if "!READY!"=="0" (
-        powershell -NoProfile -Command ^
-            "try { $r=(Invoke-WebRequest -Uri '%HEALTH_URL%' -UseBasicParsing -TimeoutSec 1 -ErrorAction Stop); if($r.StatusCode -eq 200){exit 0}else{exit 1} } catch { exit 1 }" ^
-            >nul 2>&1
-        if not errorlevel 1 (
-            set READY=1
-            echo [test] Server ready after %%I attempt(s^).
-        ) else (
-            timeout /t 1 /nobreak >nul
-        )
+netstat -ano 2>nul | findstr ":%TEST_PORT% " | findstr /I "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo [test] Port %TEST_PORT% already listening -- checking health...
+    powershell -NoProfile -Command ^
+        "try { $r=(Invoke-WebRequest -Uri '%HEALTH_URL%' -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop); if($r.StatusCode -eq 200){exit 0}else{exit 1} } catch { exit 1 }" ^
+        >nul 2>&1
+    if not errorlevel 1 (
+        set READY=1
+        echo [test] Server already running and healthy -- reusing existing instance.
+    ) else (
+        echo [test] Port %TEST_PORT% occupied but not responding -- restarting...
     )
 )
 
 if "!READY!"=="0" (
-    echo [ERROR] Server did not start within 10 seconds.
-    taskkill /F /IM HorseCSTestServer.exe /T >nul 2>&1
-    exit /b 1
+    REM Kill any leftover server before starting fresh
+    tasklist /FI "IMAGENAME eq HorseCSTestServer.exe" 2>nul | find /I "HorseCSTestServer.exe" >nul
+    if not errorlevel 1 (
+        echo [test] Killing leftover HorseCSTestServer.exe...
+        taskkill /F /IM HorseCSTestServer.exe /T >nul 2>&1
+        timeout /t 1 /nobreak >nul
+    )
+
+    REM -- Start server in background ------------------------------------------
+
+    echo [test] Starting server on port %TEST_PORT%...
+    start "HorseCSTestServer" /B "%SERVER_EXE%"
+
+    REM -- Wait for server to be ready (health-check, up to 10 s) -------------
+
+    for /L %%I in (1,1,10) do (
+        if "!READY!"=="0" (
+            powershell -NoProfile -Command ^
+                "try { $r=(Invoke-WebRequest -Uri '%HEALTH_URL%' -UseBasicParsing -TimeoutSec 1 -ErrorAction Stop); if($r.StatusCode -eq 200){exit 0}else{exit 1} } catch { exit 1 }" ^
+                >nul 2>&1
+            if not errorlevel 1 (
+                set READY=1
+                echo [test] Server ready after %%I attempt(s^).
+            ) else (
+                timeout /t 1 /nobreak >nul
+            )
+        )
+    )
+
+    if "!READY!"=="0" (
+        echo [ERROR] Server did not start within 10 seconds.
+        taskkill /F /IM HorseCSTestServer.exe /T >nul 2>&1
+        exit /b 1
+    )
 )
 
 REM -- Run client --------------------------------------------------------------

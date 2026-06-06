@@ -88,3 +88,8 @@ __recovery/
 *.identcache
 *.tvsconfig
 *.dsk
+
+*.local
+*.~dsk
+*.identifier
+samples/bench/results/
