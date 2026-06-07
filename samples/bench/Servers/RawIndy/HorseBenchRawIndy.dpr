@@ -48,7 +48,9 @@
 {$APPTYPE CONSOLE}
 
 uses
+  {$IFDEF MSWINDOWS}
   Winapi.Windows,
+  {$ENDIF}
   System.SysUtils,
   System.Classes,
   IdHTTPServer,
@@ -136,6 +138,7 @@ end;
 var
   GHandler: TRawIndyHandler;
 
+{$IFDEF MSWINDOWS}
 function CtrlHandler(dwCtrlType: DWORD): BOOL; stdcall;
 begin
   case dwCtrlType of
@@ -151,6 +154,7 @@ begin
     Result := False;
   end;
 end;
+{$ENDIF}
 
 function HasSwitch(const ASwitch: string): Boolean;
 var
@@ -186,7 +190,9 @@ begin
   GListenQueue := GetSwitchInt('listenqueue', 0);
   if GAddHeaders then
     GModeLabel := '+headers (native)';
+  {$IFDEF MSWINDOWS}
   SetConsoleCtrlHandler(@CtrlHandler, True);
+  {$ENDIF}
 
   GHandler := TRawIndyHandler.Create;
   GServer  := TIdHTTPServer.Create(nil);
@@ -209,7 +215,7 @@ begin
     WriteLn('Press Ctrl-C to stop.');
 
     while not GShutdown do
-      Sleep(100);
+      TThread.Sleep(100);
 
   finally
     GServer.Active := False;

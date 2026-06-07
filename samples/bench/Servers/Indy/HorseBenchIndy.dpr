@@ -46,7 +46,9 @@
 {$APPTYPE CONSOLE}
 
 uses
+  {$IFDEF MSWINDOWS}
   Winapi.Windows,
+  {$ENDIF}
   System.SysUtils,
   System.StrUtils,
   Horse,
@@ -70,6 +72,7 @@ var
   GMaxConn:       Integer;   // --maxconn N : THorse.MaxConnections override (0 = leave default)
   GListenQueue:   Integer;   // --listenqueue N : Indy TCP accept backlog (0 = leave default 15)
 
+{$IFDEF MSWINDOWS}
 function CtrlHandler(dwCtrlType: DWORD): BOOL; stdcall;
 begin
   case dwCtrlType of
@@ -83,6 +86,7 @@ begin
     Result := False;
   end;
 end;
+{$ENDIF}
 
 { FindCmdLineSwitch strips only one leading dash, so '--middleware' compares
   '-middleware' vs 'middleware' and returns False.  This helper trims all
@@ -126,7 +130,9 @@ begin
   GAnyMiddleware := GModeBoth or GModeGuard or GModeHeaders or GModeHdrBefore or GModeCors;
   GPort          := BASE_PORT + (BENCH_PORT_MW_OFFSET * Ord(GAnyMiddleware));
 
+  {$IFDEF MSWINDOWS}
   SetConsoleCtrlHandler(@CtrlHandler, True);
+  {$ENDIF}
 
   // A/B isolation: --guard-only and --headers-only register a single middleware
   // each so the per-request cost can be attributed to one unit. Order for the
