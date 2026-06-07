@@ -16,6 +16,7 @@
     HorseBenchMormot.exe --middleware           → port 9013
     HorseBenchRawCrossSocket.exe                → port 9004
     HorseBenchRawMormot.exe                     → port 9005
+    HorseBenchRawIndy.exe                       → port 9006
 
   Scenarios:
     1  GET  /ping   c=10    n=50 000   baseline, low concurrency
@@ -51,7 +52,6 @@
 {$APPTYPE CONSOLE}
 
 uses
-  Winapi.Windows,
   System.SysUtils,
   System.StrUtils,
   System.Classes,
@@ -108,7 +108,7 @@ type
 // ── Provider and scenario definitions ─────────────────────────────────────────
 
 const
-  PROVIDER_COUNT  = 5;
+  PROVIDER_COUNT  = 6;
   SCENARIO_COUNT  = 5;
 
   // MwPort = 0 means this provider has no middleware variant — the middleware
@@ -123,6 +123,8 @@ const
     (Name: 'Raw-CrossSocket';BarePort: BENCH_PORT_RAW_CROSSSOCKET;
                              MwPort:   0),
     (Name: 'Raw-mORMot';     BarePort: BENCH_PORT_RAW_MORMOT;
+                             MwPort:   0),
+    (Name: 'Raw-Indy';       BarePort: BENCH_PORT_RAW_INDY;
                              MwPort:   0)
   );
 
@@ -195,9 +197,9 @@ end;
   Returns timing stats for all completed requests.
 
   Sliding-window dispatch:
-    hSem (Windows semaphore, initial = AConcurrency) throttles dispatch.
-    Main thread: WaitForSingleObject before each DoRequest.
-    Callback:    ReleaseSemaphore after recording the sample.
+    hSem (TSemaphore, initial = AConcurrency) throttles dispatch — cross-platform.
+    Main thread: hSem.WaitFor before each DoRequest.
+    Callback:    hSem.Release after recording the sample.
     DoneEvent:   signalled when FRemain reaches 0 (all callbacks fired).
 
   Per-request timing:
@@ -218,7 +220,8 @@ function RunScenario(
   AWarmup:            Boolean
 ): TBenchResult;
 var
-  hSem:       THandle;
+  //hSem:       THandle;
+  hSem:       TSemaphore;   // cross-platform (System.SyncObjs); was Winapi THandle
   DoneEvent:  TEvent;
   Samples:    TArray<Int64>;
   FErrors:    Integer;
@@ -241,7 +244,8 @@ begin
   LURL    := ABaseURL + ARoute;
 
   SetLength(Samples, ATotalReqs);
-  hSem      := CreateSemaphore(nil, AConcurrency, AConcurrency, nil);
+  //hSem      := CreateSemaphore(nil, AConcurrency, AConcurrency, nil);
+  hSem      := TSemaphore.Create(nil, AConcurrency, AConcurrency, '');
   DoneEvent := TEvent.Create(nil, True, False, '');
   try
     // Each call LDispatch(I) is a distinct procedure invocation.
@@ -262,7 +266,8 @@ begin
             if (AResp = nil) or (AResp.StatusCode < 200) or (AResp.StatusCode >= 300) then
               TInterlocked.Increment(FErrors);
 
-            ReleaseSemaphore(hSem, 1, nil);
+            //ReleaseSemaphore(hSem, 1, nil);
+            hSem.Release;
 
             if TInterlocked.Decrement(FRemain) = 0 then
               DoneEvent.SetEvent;
@@ -273,11 +278,13 @@ begin
 
     for I := 0 to ATotalReqs - 1 do
     begin
-      WaitForSingleObject(hSem, INFINITE);
+      //WaitForSingleObject(hSem, INFINITE);
+      hSem.WaitFor;
       LDispatch(I);
     end;
 
-    DoneEvent.WaitFor(INFINITE);   // block until all ATotalReqs callbacks have fired
+    //DoneEvent.WaitFor(INFINITE);   // block until all ATotalReqs callbacks have fired
+    DoneEvent.WaitFor;   // block until all ATotalReqs callbacks have fired (default INFINITE)
     LSW.Stop;
 
     if AWarmup then
@@ -300,7 +307,8 @@ begin
     Result.P999Us := LP999Us;
 
   finally
-    CloseHandle(hSem);
+    //CloseHandle(hSem);
+    hSem.Free;
     DoneEvent.Free;
   end;
 end;
@@ -358,10 +366,10 @@ var
 
 begin
   WriteLn('[HorseBench] Horse provider performance comparison');
-  WriteLn('[HorseBench] Ensure all 8 server binaries are listening before proceeding.');
+  WriteLn('[HorseBench] Ensure all 9 server binaries are listening before proceeding.');
   WriteLn('[HorseBench]   Indy bare        :9001  CrossSocket bare    :9002  mORMot bare    :9003');
   WriteLn('[HorseBench]   Indy +mw         :9011  CrossSocket +mw     :9012  mORMot +mw     :9013');
-  WriteLn('[HorseBench]   Raw-CrossSocket  :9004  Raw-mORMot          :9005');
+  WriteLn('[HorseBench]   Raw-CrossSocket  :9004  Raw-mORMot          :9005  Raw-Indy       :9006');
   WriteLn('');
 
   Results    := TList<TBenchResult>.Create;

@@ -4,12 +4,11 @@
         <MainSource>HorseBenchIndy.dpr</MainSource>
         <Base>True</Base>
         <Config Condition="'$(Config)'==''">Release</Config>
-        <ProjectName Condition="'$(ProjectName)'==''">HorseBenchIndy</ProjectName>
         <TargetedPlatforms>168067</TargetedPlatforms>
         <AppType>Console</AppType>
         <FrameworkType>None</FrameworkType>
         <ProjectVersion>20.2</ProjectVersion>
-        <Platform Condition="'$(Platform)'==''">Win64</Platform>
+        <Platform Condition="'$(Platform)'==''">Linux64</Platform>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
         <Base>true</Base>

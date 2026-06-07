@@ -28,8 +28,11 @@
 {$APPTYPE CONSOLE}
 
 uses
+  {$IFDEF MSWINDOWS}
   Winapi.Windows,
+  {$ENDIF}
   System.SysUtils,
+  System.Classes,         // TThread.Sleep (cross-platform)
   mormot.core.base,       // RawUtf8, RawByteString
   mormot.core.unicode,    // StringToUtf8, Utf8ToString
   mormot.net.http,        // THttpServerRequestAbstract, HTTP status codes
@@ -112,6 +115,7 @@ var
   GHandler:  TRawMormotHandler;
   GShutdown: Boolean = False;
 
+{$IFDEF MSWINDOWS}
 function CtrlHandler(dwCtrlType: DWORD): BOOL; stdcall;
 begin
   case dwCtrlType of
@@ -127,6 +131,7 @@ begin
     Result := False;
   end;
 end;
+{$ENDIF}
 
 function HasSwitch(const ASwitch: string): Boolean;
 var
@@ -142,7 +147,9 @@ begin
   GAddHeaders := HasSwitch('headers');
   if GAddHeaders then
     GModeLabel := '+headers (native)';
+  {$IFDEF MSWINDOWS}
   SetConsoleCtrlHandler(@CtrlHandler, True);
+  {$ENDIF}
 
   GHandler := TRawMormotHandler.Create;
   GServer  := THttpServer.Create(
@@ -161,7 +168,7 @@ begin
     WriteLn('Press Ctrl-C to stop.');
 
     while not GShutdown do
-      Sleep(100);
+      TThread.Sleep(100);
 
   finally
     GServer.Free;

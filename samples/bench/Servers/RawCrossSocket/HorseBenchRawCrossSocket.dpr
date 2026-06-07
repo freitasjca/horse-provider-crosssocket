@@ -26,7 +26,9 @@
 {$APPTYPE CONSOLE}
 
 uses
+  {$IFDEF MSWINDOWS}
   Winapi.Windows,
+  {$ENDIF}
   System.SysUtils,
   System.Classes,
   Net.CrossHttpServer,
@@ -42,6 +44,7 @@ var
   GAddHeaders: Boolean = False;   // --headers: stamp the 5 SecurityHeaders natively
   GModeLabel:  string  = 'bare';
 
+{$IFDEF MSWINDOWS}
 function CtrlHandler(dwCtrlType: DWORD): BOOL; stdcall;
 begin
   case dwCtrlType of
@@ -57,6 +60,7 @@ begin
     Result := False;
   end;
 end;
+{$ENDIF}
 
 function HasSwitch(const ASwitch: string): Boolean;
 var
@@ -72,7 +76,9 @@ begin
   GAddHeaders := HasSwitch('headers');
   if GAddHeaders then
     GModeLabel := '+headers (native)';
+  {$IFDEF MSWINDOWS}
   SetConsoleCtrlHandler(@CtrlHandler, True);
+  {$ENDIF}
 
   GServer := TCrossHttpServer.Create(0 {IoThreads: 0 = CPU count}, False {Ssl});
   try
@@ -148,7 +154,7 @@ begin
     WriteLn('Press Ctrl-C to stop.');
 
     while not GShutdown do
-      Sleep(100);
+      TThread.Sleep(100);
 
   finally
     GServer.Free;

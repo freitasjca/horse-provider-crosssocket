@@ -27,7 +27,9 @@
 {$DEFINE HORSE_PROVIDER_MORMOT}
 
 uses
+  {$IFDEF MSWINDOWS}
   Winapi.Windows,
+  {$ENDIF}
   System.SysUtils,
   System.StrUtils,
   System.SyncObjs,
@@ -60,6 +62,7 @@ var
   GHighStatus:    Integer;     // responses left >=500 by the pipeline WITHOUT raising
   GLogFile:       string;
 
+{$IFDEF MSWINDOWS}
 function CtrlHandler(dwCtrlType: DWORD): BOOL; stdcall;
 begin
   case dwCtrlType of
@@ -73,6 +76,7 @@ begin
     Result := False;
   end;
 end;
+{$ENDIF}
 
 function HasSwitch(const ASwitch: string): Boolean;
 var
@@ -214,7 +218,9 @@ begin
   GLogLock     := TCriticalSection.Create;
   GErrorCounts := TDictionary<string, Integer>.Create;
   try
+    {$IFDEF MSWINDOWS}
     SetConsoleCtrlHandler(@CtrlHandler, True);
+    {$ENDIF}
 
     try TFile.WriteAllText(GLogFile, ''); except end;
     LogLine(Format('Diagnostic run start %s | port %d | %s | provider=mORMot',

@@ -30,9 +30,10 @@ const
   BENCH_PORT_MORMOT_BARE      = 9003;
   BENCH_PORT_MW_OFFSET        = 10;   // bare_port + offset = middleware port
 
-  // Raw transport servers (no Horse framework — CrossSocket / mORMot directly)
+  // Raw transport servers (no Horse framework — CrossSocket / mORMot / Indy directly)
   BENCH_PORT_RAW_CROSSSOCKET  = 9004;
   BENCH_PORT_RAW_MORMOT       = 9005;
+  BENCH_PORT_RAW_INDY         = 9006;   // pure TIdHTTPServer, no WebBroker
 
   ALLOC_BODY_SIZE = 1024;             // bytes returned by GET /alloc
 
