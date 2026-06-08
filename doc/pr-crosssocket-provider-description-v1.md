@@ -20,7 +20,7 @@ The Indy provider that Horse uses by default allocates **one blocking OS thread 
 
 | Bottleneck | Indy (one thread per connection) | CrossSocket (epoll / IOCP) |
 |---|---|---|
-| Thread overhead | Each thread consumes ~1–2 MB of stack. 1 000 concurrent connections = ~1–2 GB reserved stack space | Fixed IO thread count — default is CPU core count, typically 4–16 threads regardless of connection count |
+| Thread overhead | Each thread consumes ~1–2 MB of stack. 1 000 concurrent connections = ~1–2 GB reserved stack space | Fixed IO thread pool sized once at startup — default `CPUCount*2+1` (logical CPUs): e.g. 9 on a 4-core, 17 on an 8-core. Independent of connection count; overridable via `THorseCrossSocketConfig.IoThreads` |
 | Context switching | OS scheduler switches between hundreds or thousands of threads under load, burning CPU cycles that never touch application code | IO threads never block; the kernel notifies them only when data is ready — near-zero idle CPU |
 | `accept()` serialisation | Indy calls `accept()` on a single thread, which becomes a bottleneck above ~a few hundred connections/sec | CrossSocket distributes `accept()` across IO threads |
 | Memory allocation per request | Default Horse/Indy path allocates a new `THorseRequest` + `THorseResponse` + their dictionaries on every request | Context object pool (`THorseContextPool`) pre-warms 32 contexts and recycles them — the allocator is not invoked on the hot path |
@@ -28,18 +28,24 @@ The Indy provider that Horse uses by default allocates **one blocking OS thread 
 
 These are **structural differences**, not tuning differences. No amount of Indy configuration closes the gap under high concurrency because the thread-per-connection model is the constraint.
 
-#### Indicative numbers from the community
+#### Measured results
 
-> The figures below are drawn from community reports and general benchmarks of epoll-based vs. thread-per-connection HTTP servers. A dedicated load-testing run (wrk/k6) to produce measured results is planned before requesting final merge.
+> The figures below are from this repository's own benchmark ladder (`bombardier`, Release builds, one isolated server at a time, identical Horse app + routes per provider). Run on PC1 — 28 logical CPUs, WSL2 / Ubuntu 22 — over loopback. Loopback microbenchmarks exaggerate absolute throughput vs. a real network, but the **relative scaling between providers** is the architectural point. Full data and methodology: `bench/results/bench-analysis-report.md` §7.4–7.5 and the visual summary `bench/results/nodelay-linux-considerations.html`.
 
-General async I/O HTTP servers (nginx, Go `net/http`, Node.js) consistently outperform thread-per-connection servers (classic Apache prefork, Indy-based servers) by **3× to 10× on throughput** and **10× to 50× on peak concurrent connections** at equivalent hardware, according to published benchmarks and the [C10K problem literature](http://www.kegel.com/c10k.html).
+**Same Horse app, bare route, all NODELAY-fixed:**
 
-For Delphi specifically, the Delphi-Cross-Socket library author and community members report:
+| Concurrency | Horse+Indy | Horse+CrossSocket | Horse+mORMot |
+|---|---|---|---|
+| **c=100** | 13 736 RPS · P50 6.76 ms | **41 265 RPS · P50 2.19 ms** (≈ 3× Indy) | 68 059 RPS · P50 0.58 ms (≈ 5× Indy) |
+| **c=500** | 12 688 RPS · P99 108.8 ms | **108 192 RPS · P99 21.9 ms** (≈ 8.5× Indy) | 144 140 RPS · P99 20.9 ms |
 
-- Handling **10 000+ concurrent keep-alive connections** on a single modest server that would exhaust Indy's thread pool well below 1 000.
-- **Sub-millisecond** median response latency on simple routes (comparable to nginx for static content) vs. multi-millisecond latency under Indy at the same concurrency due to scheduler pressure.
+Key observations, all with **0 5xx / 0 errors**:
 
-These figures are consistent with what the epoll/IOCP architecture predicts and with results from equivalent libraries in other languages (libuv, Boost.Asio, netty).
+- **The async advantage widens with concurrency** — exactly what the epoll/IOCP model predicts. CrossSocket goes from ~3× Indy at c=100 to ~8.5× at c=500, because Indy's thread-per-connection model degrades under oversubscription while the fixed IO-thread pool does not.
+- **Tail latency is the sharpest difference:** at c=500 CrossSocket's P99 is **21.9 ms vs. Indy's 108.8 ms** (~5× better) — the practical impact of not allocating a thread per connection.
+- Indy stays *error-free* at c=500 only after raising `MaxConnections`/`ListenQueue` (now the library default); CrossSocket needs no such tuning to stay clean.
+
+These results are consistent with general async-vs-thread-per-connection benchmarks (nginx / Go `net/http` / Node.js vs. Apache prefork) and the [C10K problem literature](http://www.kegel.com/c10k.html). A separate cross-OS finding: on the same box, **mORMot ran ≈ 9× its Windows throughput on Linux** (§7.5) — a reminder that absolute numbers are platform-bound while the provider ordering holds.
 
 #### What the CrossSocket provider adds on top
 
@@ -48,7 +54,7 @@ Beyond the transport layer, this provider contributes additional performance wor
 - **Object pool** (`THorseContextPool`) — 32 pre-warmed `THorseRequest`/`THorseResponse` pairs recycled via `Clear` instead of `Free`/`Create`. Pool capacity scales to 512 under burst load. The allocator is bypassed entirely on the hot path.
 - **Worker thread pool** (`THorseWorkerPool`) — 4 to 64 threads for CPU-bound route handlers, preventing any single slow handler from blocking an IO thread and stalling unrelated connections.
 - **Pre-validation before pool acquisition** — malformed requests (bad Host, smuggling attempt, disallowed method) are rejected before a context object is even taken from the pool, so attack traffic never touches the application layer.
-- **`TDictionary`-backed headers** — header lookup is O(1) vs. the O(n) linear scan of `TStringList` used in the default Horse path.
+- **`TCP_NODELAY` on every accepted connection** — the server's `OnConnected` hook disables Nagle (`TSocketAPI.SetTcpNoDelay`). Without it, on Linux loopback the keep-alive request/response ping-pong stalls on the kernel's ~40 ms delayed-ACK timer (a flat ~44 ms/request floor); with it, latency is determined by the handler, not the TCP stack. Matches nginx/Go/mORMot defaults; CrossSocket sets `SO_KEEPALIVE` on accept but not `TCP_NODELAY`, so the provider adds it.
 
 #### When CrossSocket is the right choice
 

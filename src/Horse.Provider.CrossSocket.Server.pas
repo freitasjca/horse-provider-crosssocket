@@ -83,6 +83,8 @@ uses
   System.SysUtils,
   System.Classes,
   System.SyncObjs,
+  Net.SocketAPI,          // TSocketAPI.SetTcpNoDelay (TCP_NODELAY on accept)
+  Net.CrossSocket.Base,   // ICrossConnection (OnConnected handler)
   Net.CrossHttpServer,
   Net.CrossHttpParams,
   Net.CrossSslSocket.Base,
@@ -146,6 +148,12 @@ type
       const AResponse:   ICrossHttpResponse;
       var   AHandled:    Boolean
     );
+    // [NODELAY] Method-of-object assigned to FServer.OnConnected — disables Nagle
+    // (TCP_NODELAY) on every accepted connection. CrossSocket sets SO_KEEPALIVE on
+    // accept but never TCP_NODELAY, so on Linux loopback keep-alive responses hit
+    // the ~40 ms delayed-ACK -> a flat ~44 ms/request floor. See report §7.5.
+    procedure InternalOnConnected(const Sender: TObject;
+      const AConnection: ICrossConnection);
   public
     constructor Create(const AConfig: THorseCrossSocketConfig); overload;
     constructor Create; overload;
@@ -189,6 +197,7 @@ begin
   FServerRef := FServer;
 
   FServer.OnRequest := InternalOnRequest;
+  FServer.OnConnected := InternalOnConnected;   // [NODELAY] TCP_NODELAY per connection
 
   ApplyConfig;
 end;
@@ -312,6 +321,13 @@ begin
   AHandled := True;   // always claim the request
   if Assigned(FRequestCallback) then
     FRequestCallback(ARequest, AResponse);
+end;
+
+procedure THorseCrossSocketServer.InternalOnConnected(const Sender: TObject;
+  const AConnection: ICrossConnection);
+begin
+  // [NODELAY] disable Nagle on the accepted socket (see declaration / report §7.5)
+  TSocketAPI.SetTcpNoDelay(AConnection.Socket, True);
 end;
 
 procedure THorseCrossSocketServer.IncrementActive;

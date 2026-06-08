@@ -62,23 +62,21 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 | Dependency | Version | Notes |
 |---|---|---|
 | Delphi | 10.4 Sydney+ | Requires `System.Threading`, inline `var` |
-| [Horse](https://github.com/HashLoad/horse) | 3.2.0+ | Pulled in by `boss install` of this package. The last released tag is `v3.2.0` (Mar 30, 2026); subsequent improvements continue on `master` without a release tag yet — Boss will resolve `>=3.2.0` to the tagged release. If your build needs an unreleased addition that lives only on `master`, pin to the branch explicitly with `"github.com/HashLoad/horse": "master"` in your application's `boss.json`. |
-| [Delphi-Cross-Socket](https://github.com/winddriver/Delphi-Cross-Socket) | latest | Transport layer — install from upstream (`winddriver`); the [`freitasjca/Delphi-Cross-Socket >= 1.0.3`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.3) fork is a supported alternative for mTLS-server-mode users (see [Mutual TLS (mTLS)](#mutual-tls-mtls)) |
-| [CnPack](https://github.com/cnpack/cnvcl) (Crypto units) | latest | Required by Delphi-Cross-Socket — install separately. See [Installation](#installation) |
+| [Horse](https://github.com/HashLoad/horse) | 3.1.100+ | The required changes are **not yet in an official release** of `HashLoad/horse`. This provider therefore depends on [`freitasjca/horse`](https://github.com/freitasjca/horse) (tag `1.0.100`), a temporary fork that tracks the upstream `master` branch and provides a Boss‑installable tag. Once an official Horse release containing the changes is published, the dependency will be switched back to `HashLoad/horse`. |
+| Delphi-Cross-Socket  | latest | Transport layer. **When installed through Boss as a dependency of `horse-provider-crosssocket`, Boss resolves to [`freitasjca/Delphi-Cross-Socket >= 1.0.3`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.3)**, which bundles the required CnPack subset and the mTLS additions. This fork exists to make Delphi‑Cross‑Socket Boss‑installable. See [Installation](#installation) for details. |
 | OpenSSL | 1.1.x or 3.x | Only required for HTTPS |
-| [Boss](https://github.com/HashLoad/boss) | any | Recommended — pulls in Horse automatically |
+| [Boss](https://github.com/HashLoad/boss) | any | Recommended – pulls in the correct Horse fork and the CrossSocket dependency automatically |
 
-> **Horse is now upstream.** Earlier releases of this provider depended on a patched Horse fork (`freitasjca/horse`) because the required additive changes had not yet landed in `HashLoad/horse`. **The patches have since been merged upstream**, so `boss.json` now declares the dependency directly against `github.com/HashLoad/horse` — no fork is involved in the install path. The [Required Changes to Horse Source](#required-changes-to-horse-source) section below is kept as historical reference describing **what** was added; on a current `HashLoad/horse` checkout the changes are already in place.
-
-> **Delphi-Cross-Socket is installed manually.** Unlike Horse, Delphi-Cross-Socket is **not** pulled in by `boss install` — clone it directly and add the search paths (see [Installation](#installation)). Three bug fixes that were previously fork-only — `PATCH-IOCP-1` (DEBUG-build shutdown cascade), the `TCrossHttpClient` zero-body parser hang, and the `_OnBodyEnd` nil-guard — have all been merged into `winddriver/Delphi-Cross-Socket` upstream as of 2026-Q2, so the upstream mainline is now correct for general use. Only the mTLS server-mode API (`SetCACertificateFile` / `SetVerifyPeer`) remains fork-only — that's what the fork release [`freitasjca/Delphi-Cross-Socket v1.0.3`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.3) ships, ready-to-use without manual patching.
+> **Maintainer note**  
+> The `freitasjca/Delphi-Cross-Socket` fork (v1.0.3) vendors a curated CnPack subset under `CnPack/Common` and `CnPack/Crypto`, and includes the mTLS server‑mode additions (`SetCACertificateFile`, `SetVerifyPeer`). The fork is periodically synchronized from upstream [`winddriver/Delphi-Cross-Socket`](https://github.com/winddriver/Delphi-Cross-Socket), but may lag behind. See [`MAINTAINING-CNPACK-SUBSET.md`](MAINTAINING-CNPACK-SUBSET.md) for internal maintenance details.
 
 ---
 
 ## Required Changes to Horse Source
 
-> **Status: MERGED UPSTREAM.** The additive changes documented below are now present in `HashLoad/horse` and `boss install horse-provider-crosssocket` resolves the dependency against the upstream repository directly. The section is retained as **historical reference** so contributors understand *what* was added and *why* — useful when reading the patched files in `patches/horse/src/` (kept for archive purposes), when diagnosing a build that picks up an older Horse version that pre-dates the merge, or when contributing further provider-level changes that may need parallel additions to Horse itself.
->
-> If your `boss.json` was previously pinned to `github.com/freitasjca/horse`, switch it to `github.com/HashLoad/horse` — application code, middleware, and routes are unchanged.
+> **Status: Changes are merged into `HashLoad/horse` `master`, but there is no official release yet.**  
+> This provider therefore depends on a tagged fork – [`freitasjca/horse`](https://github.com/freitasjca/horse) `1.0.100` – which contains exactly the same additive changes described below.  
+> When `HashLoad/horse` releases a version that includes these changes (e.g., v3.2.0), this provider will switch its dependency back to the official package.
 
 ### What the Horse patches add
 
@@ -387,92 +385,83 @@ No existing method is removed, renamed, or given a different signature. Existing
 
 ## Applying the Patches
 
-There are no patches for an end-user to apply.
+**There are no patches for an end-user to apply.**
 
-- **Horse patches**: merged into `HashLoad/horse` upstream. `boss install` resolves the upstream repo directly.
-- **Delphi-Cross-Socket bug fixes** (`PATCH-IOCP-1` shutdown cascade, the zero-body parser hang, the `_OnBodyEnd` nil-guard): merged into `winddriver/Delphi-Cross-Socket` upstream as of 2026-Q2. No action required if your clone is recent.
-- **Delphi-Cross-Socket mTLS additions** (`SetCACertificate(File)` + `SetVerifyPeer(Boolean)`): **not** in `winddriver/Delphi-Cross-Socket` upstream. End-users who need mTLS server mode get the additions in pre-applied form by using the fork release [`freitasjca/Delphi-Cross-Socket v1.0.3`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.3) — single clone, ready to compile. See [Path B in Installation](#installation) and the [Mutual TLS (mTLS)](#mutual-tls-mtls) section.
+- **Horse changes** are already present in the tagged fork [`freitasjca/horse`](https://github.com/freitasjca/horse) (`1.0.100`) that this provider depends on. When you `boss install` this provider, the correct Horse version is pulled automatically.
+- **Delphi-Cross-Socket bug fixes** (shutdown cascade, zero-body parser hang, `_OnBodyEnd` nil-guard) are merged into `winddriver/Delphi-Cross-Socket` upstream as of 2026-Q2. No action required if your clone is recent.
+- **Delphi-Cross-Socket mTLS additions** (`SetCACertificateFile` + `SetVerifyPeer`) are **not** in the upstream `winddriver/Delphi-Cross-Socket`. They are included in the fork release [`freitasjca/Delphi-Cross-Socket v1.0.3`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.3), which is the dependency resolved by Boss.
 
-> A `patches/` directory exists in this repository for **maintainer reference** only — it holds the original Horse-source diffs (now obsolete since the merge) and the Delphi-Cross-Socket mTLS source files used to construct the fork release `v1.0.3`. End-users never interact with that directory.
+
+---
+
+## Important: Boss dependency resolution
+
+`horse-provider-crosssocket` declares a dependency on
+`freitasjca/Delphi-Cross-Socket` and Boss currently resolves that
+dependency to **v1.0.3**.
+
+The fork exists for packaging reasons:
+
+- Upstream `winddriver/Delphi-Cross-Socket` does not provide a
+  `boss.json` manifest.
+- Delphi-Cross-Socket depends on CnPack crypto units, and the upstream
+  `cnpack/cnvcl` repository is not Boss-installable.
+- The fork vendors the minimal required CnPack subset and includes the
+  current mTLS additions, making the package directly consumable through Boss.
+
+The fork is **not intended to permanently diverge from upstream**. Its
+primary purpose is Boss compatibility and packaging convenience.
+However, `winddriver/Delphi-Cross-Socket` is actively developed and new
+fixes or features may appear upstream before they are synchronized into
+the fork. If you require the latest upstream functionality, review the
+upstream project and compare it with the fork release you are using.
+
+For maintainers: the fork contains a curated subset of CnPack under
+`CnPack/Common` and `CnPack/Crypto`. This subset must remain a complete
+transitive dependency closure and stay synchronized with the fork-sync
+automation described in the Delphi-Cross-Socket repository's
+maintenance documentation.
 
 ---
 
 ## Installation
 
-There are three supported install paths. **Path A is recommended** for new projects; pick B if you want bundled CnPack convenience or need mTLS; pick C if you need mTLS today and are willing to use the fork release.
+There are two supported install paths. **Path A is recommended** for most users – it uses the Boss‑ready forks for both Horse and Delphi‑Cross‑Socket, and automatically pulls the correct dependencies.
 
-### Path A — Recommended: Boss for Horse + upstream Delphi-Cross-Socket + CnPack from `cnpack/cnvcl`
+### Path A — Recommended: Boss install (fully automatic)
 
-Tracks the upstream maintainers' release cadence; smallest maintenance surface. Mirrors the install pattern used by `horse-provider-mormot` (Boss pulls Horse; everything else is a manual clone).
+One command installs everything, including the required `freitasjca/horse` fork and the `freitasjca/Delphi-Cross-Socket` fork (which bundles CnPack and mTLS):
 
-1. Install `horse-provider-crosssocket` via Boss — this also pulls Horse from `HashLoad/horse`:
+```bash
+boss install github.com/freitasjca/horse-provider-crosssocket
+```
+
+After installation, your project’s search path must include the following directories (relative to your project folder or to the Boss `modules/` folder):
+
+- `modules/horse/src/` (Boss‑managed checkout of `freitasjca/horse`)
+- `modules/horse-provider-crosssocket/src/` (Boss‑managed)
+- `Delphi-Cross-Socket/Net/` (you need to clone this fork separately – see below)
+- `Delphi-Cross-Socket/Utils/`
+- `Delphi-Cross-Socket/OpenSSL/`
+- `Delphi-Cross-Socket/CnPack/Common/`
+- `Delphi-Cross-Socket/CnPack/Crypto/`
+
+### Path B — Manual: upstream Horse + upstream Delphi-Cross-Socket + CnPack
+
+Only recommended if you need to track the absolute latest upstream `Delphi-Cross-Socket` `master` branch (and are willing to accept that it may not be tagged for Boss). Steps:
+
+1. Install `horse-provider-crosssocket` via Boss (this still pulls the provider’s source):
    ```bash
    boss install github.com/freitasjca/horse-provider-crosssocket
    ```
-2. Clone upstream Delphi-Cross-Socket and CnPack manually (Boss does not pull these):
+2. Override the Horse dependency in your `boss.json` to point to `HashLoad/horse#master` (or use a Git submodule).
+3. Clone upstream Delphi‑Cross‑Socket and CnPack manually:
    ```bash
    git clone https://github.com/winddriver/Delphi-Cross-Socket
    git clone https://github.com/cnpack/cnvcl
    ```
-3. Add to your project's search path:
-   - `modules/horse/src/` *(Boss-managed checkout of `HashLoad/horse`)*
-   - `modules/horse-provider-crosssocket/src/` *(Boss-managed)*
-   - `Delphi-Cross-Socket/Net/`
-   - `Delphi-Cross-Socket/Utils/`
-   - `Delphi-Cross-Socket/OpenSSL/`
-   - `cnvcl/Source/Common/`
-   - `cnvcl/Source/Crypto/`
-4. The two mTLS patches for Delphi-Cross-Socket are **not needed** on this path unless your application sets `SSLVerifyPeer = True`. If you need mTLS, switch to **Path B** below.
-
-**Cherry-pick variant** — if you don't want the whole CnPack repository, download only the 15 files Delphi-Cross-Socket actually uses (each from `https://github.com/cnpack/cnvcl/blob/master/Source/...`):
-
-| File | Source path on GitHub |
-|---|---|
-| `Common/CnPack.inc` | [`Source/Common/CnPack.inc`](https://github.com/cnpack/cnvcl/blob/master/Source/Common/CnPack.inc) |
-| `Crypto/CnMD5.pas`, `CnSHA1.pas`, `CnSHA2.pas`, `CnSHA3.pas`, `CnSM3.pas` | hash functions used by `Utils.Hash.pas` (+ `CnSHA3` pulled by `CnKDF`) |
-| `Crypto/CnPemUtils.pas` | PEM parsing (`Utils.Hash.pas`) |
-| `Crypto/CnConsts.pas`, `CnNative.pas`, `CnFloat.pas` | shared constants + native-int helpers (transitive) |
-| `Crypto/CnRandom.pas`, `CnKDF.pas` | CSPRNG + KDF (used by `CnPemUtils`) |
-| `Crypto/CnBase64.pas`, `CnAES.pas`, `CnDES.pas` | base64 + symmetric ciphers (used by `CnPemUtils` for encrypted PEM) |
-
-Place them under `<your-workspace>/CnPack/Common/` and `<your-workspace>/CnPack/Crypto/` (preserve the two-folder split), then add those paths to the search path instead of the `cnvcl/Source/Common` and `cnvcl/Source/Crypto` entries in step 3.
-
-### Path B — Supported alternative: `freitasjca/Delphi-Cross-Socket` fork (bundles CnPack + mTLS)
-
-Single dependency to clone (CnPack and mTLS patches both pre-applied). The trade-off is **lag**: upstream `winddriver/Delphi-Cross-Socket` ships changes frequently and the fork drifts behind between syncs — recent improvements may not yet be in the fork release you install.
-
-Use this path if:
-- You need mTLS server mode (`SSLVerifyPeer = True` + `SSLCACertFile = ...`) and don't want to apply the two mTLS patches yourself, **or**
-- You prefer one fewer clone over tracking upstream Delphi-Cross-Socket directly.
-
-1. Install via Boss (same one-liner as Path A — pulls Horse from `HashLoad/horse`):
-   ```bash
-   boss install github.com/freitasjca/horse-provider-crosssocket
-   ```
-2. Clone the Delphi-Cross-Socket fork release `v1.0.3` (CnPack and mTLS additions pre-applied):
-   ```bash
-   git clone -b v1.0.3 https://github.com/freitasjca/Delphi-Cross-Socket
-   ```
-3. Search paths (no separate CnPack entries needed — they live under `Delphi-Cross-Socket/CnPack/`):
-   - `modules/horse/src/` *(Boss-managed checkout of `HashLoad/horse`)*
-   - `modules/horse-provider-crosssocket/src/` *(Boss-managed)*
-   - `Delphi-Cross-Socket/Net/`
-   - `Delphi-Cross-Socket/Utils/`
-   - `Delphi-Cross-Socket/OpenSSL/`
-   - `Delphi-Cross-Socket/CnPack/Common/`
-   - `Delphi-Cross-Socket/CnPack/Crypto/`
-
-### `boss.json` configuration for consuming projects
-
-If your application's `boss.json` already declares `github.com/HashLoad/horse` as a direct dependency, that's fine — Boss will resolve the same package once. Both Horse and `horse-provider-crosssocket` come from the same upstream organisation, so there's no fork-vs-upstream conflict to worry about:
-
-```json
-{
-  "dependencies": {
-    "github.com/freitasjca/horse-provider-crosssocket": ">=1.0.6"
-  }
-}
-```
+4. Add the required search paths (for Horse, the provider, CrossSocket, and CnPack’s `Common` and `Crypto` units).
+5. If you need mTLS, you must manually apply the two mTLS patches from `patches/Delphi-Cross-Socket/Net/` to your CrossSocket clone.
 
 ---
 
@@ -503,6 +492,8 @@ end.
 ```
 
 That is all. Every existing middleware (`horse-jwt`, `horse-cors`, `horse-jhonson`, etc.) continues to work without modification because the provider only replaces the transport layer.
+
+> **Note:** The Horse version used by this provider is `freitasjca/horse` `1.0.100`, which is functionally identical to the upstream `HashLoad/horse` `master` branch at the time of forking. Once an official Horse release containing all required changes is available, the dependency will be switched to `HashLoad/horse` and the `HORSE_CROSSSOCKET` define will continue to work exactly as before.
 
 ---
 
@@ -740,9 +731,18 @@ This provider was designed with a layered defence-in-depth approach. Every prote
 | `MaxBodySize` enforced | 4 MB |
 | `MaxHeaderSize` enforced | 8 KB |
 | `MaxConnections` ceiling | 10 000 |
+| `TCP_NODELAY` on every accepted connection | always |
 | TLS 1.2 + 1.3, AEAD-only ciphers | when SSL enabled |
 | Mutual TLS (client cert) | opt-in |
 | `Server:` header suppressed | `unknown` |
+
+> **`TCP_NODELAY` (Nagle disabled).** The server sets `TCP_NODELAY` on each connection via its
+> `OnConnected` hook (`TSocketAPI.SetTcpNoDelay`). Without it, on **Linux loopback** the small
+> request/response ping-pong of a keep-alive connection collides with the kernel's ~40 ms delayed-ACK
+> timer, pinning throughput at a flat ~44 ms/request floor (~2 270 req/s) regardless of how fast the
+> server is. It's a per-connection option — it helps every request and harms none (response content is
+> byte-for-byte identical; only the final flush is immediate), matching nginx/Go/mORMot defaults.
+> Full analysis: `bench/results/bench-analysis-report.md` §7.5 and `nodelay-linux-considerations.html`.
 
 ### Response output — CrossSocket only
 
@@ -1059,7 +1059,7 @@ samples/
 Entry point. `THorseProviderCrossSocket.Listen(port)` or `ListenWithConfig(port, config)`. Wires CrossSocket's `OnRequest` callback to the validation → pool → pipeline → flush cycle. Tracks active requests for graceful shutdown.
 
 **`Horse.Provider.CrossSocket.Server`**
-Wraps `TCrossHttpServer`. Owns `THorseCrossSocketConfig` (all timeouts, size limits, SSL settings). `Stop` is synchronous — it waits up to `DrainTimeoutMs` for active requests to finish before returning.
+Wraps `TCrossHttpServer`. Owns `THorseCrossSocketConfig` (all timeouts, size limits, SSL settings). Wires `OnRequest` to the pipeline and `OnConnected` to `InternalOnConnected`, which calls `TSocketAPI.SetTcpNoDelay(AConnection.Socket, True)` (disables Nagle — see the Transport section). `Stop` is synchronous — it waits up to `DrainTimeoutMs` for active requests to finish before returning.
 
 **`Horse.Provider.CrossSocket.Pool`**
 Pre-allocates `THorseContext` objects at startup and reuses them across requests via `Acquire` / `Release`. `Reset` calls `THorseRequest.Clear` and `THorseResponse.Clear` — never the `Body(nil)` setter, which would free CrossSocket's non-owning stream reference and produce `EInvalidPointer` on every POST request (`FIX-POOL-1`). In `DEBUG` builds, poison values detect partial-reset bugs immediately.
@@ -1078,6 +1078,7 @@ Implement `IHorseRawRequest` / `IHorseRawResponse` by wrapping `ICrossHttpReques
 
 **`Horse.Provider.CrossSocket.WebRequestAdapter`** / **`Horse.Provider.CrossSocket.WebResponseAdapter`**
 Thin constructors that create a `TCrossSocketWebRequest` / `TCrossSocketWebResponse` — backward-compatible subclasses of `TInterfacedWebRequest` / `TInterfacedWebResponse` (from `Horse.Provider.RawAdapters`). Assigned to `THorseRequest.RawWebRequest` and `THorseResponse.RawWebResponse` so existing middleware that calls `Req.RawWebRequest.Method` or `Res.RawWebResponse.SetCustomHeader` works without modification.
+
 
 ---
 
@@ -1101,7 +1102,9 @@ MIT — see [LICENSE](LICENSE).
 ## Related projects
 
 - [Horse](https://github.com/HashLoad/horse) — the web framework
+- [freitasjca/horse](https://github.com/freitasjca/horse) — temporary synchronization fork containing required changes (tag `1.0.100`)
 - [Delphi-Cross-Socket](https://github.com/winddriver/Delphi-Cross-Socket) — the async socket library
+- [freitasjca/Delphi-Cross-Socket](https://github.com/freitasjca/Delphi-Cross-Socket) — Boss‑installable fork with CnPack subset and mTLS (tag `v1.0.3`)
 - [Boss](https://github.com/HashLoad/boss) — the Delphi package manager
 - [horse-jwt](https://github.com/HashLoad/horse-jwt) — JWT middleware
 - [horse-cors](https://github.com/HashLoad/horse-cors) — CORS middleware

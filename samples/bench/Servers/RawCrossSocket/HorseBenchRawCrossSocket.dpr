@@ -31,6 +31,8 @@ uses
   {$ENDIF}
   System.SysUtils,
   System.Classes,
+  Net.SocketAPI,          // TSocketAPI.SetTcpNoDelay
+  Net.CrossSocket.Base,   // ICrossConnection
   Net.CrossHttpServer,
   Net.CrossHttpParams;
 
@@ -43,6 +45,24 @@ var
   GShutdown:   Boolean = False;
   GAddHeaders: Boolean = False;   // --headers: stamp the 5 SecurityHeaders natively
   GModeLabel:  string  = 'bare';
+
+type
+  TConnTuner = class
+  public
+    procedure OnConnected(const Sender: TObject; const AConnection: ICrossConnection);
+  end;
+
+var
+  GTuner: TConnTuner;
+
+{ TCP_NODELAY per connection. CrossSocket sets KeepAlive on accept but NOT
+  TCP_NODELAY, so on Linux loopback the small keep-alive responses collide with
+  the ~40 ms delayed ACK -> a flat ~44 ms/request floor (~2270 RPS) that masks the
+  real numbers. Disable Nagle here. (mORMot does this by default.) }
+procedure TConnTuner.OnConnected(const Sender: TObject; const AConnection: ICrossConnection);
+begin
+  TSocketAPI.SetTcpNoDelay(AConnection.Socket, True);
+end;
 
 {$IFDEF MSWINDOWS}
 function CtrlHandler(dwCtrlType: DWORD): BOOL; stdcall;
@@ -81,6 +101,8 @@ begin
   {$ENDIF}
 
   GServer := TCrossHttpServer.Create(0 {IoThreads: 0 = CPU count}, False {Ssl});
+  GTuner  := TConnTuner.Create;
+  GServer.OnConnected := GTuner.OnConnected;   // TCP_NODELAY per connection
   try
     // ── GET /ping — fixed response, no body ──────────────────────────────
     GServer.Get('/ping',
@@ -158,6 +180,7 @@ begin
 
   finally
     GServer.Free;
+    GTuner.Free;
   end;
 
   WriteLn('[HorseBench/RawCrossSocket] Stopped cleanly.');

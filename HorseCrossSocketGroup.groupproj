@@ -15,12 +15,6 @@
         <Projects Include="samples\tests\HorseCSTestServer.dproj">
             <Dependencies/>
         </Projects>
-        <Projects Include="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpServer\HttpServer.dproj">
-            <Dependencies/>
-        </Projects>
-        <Projects Include="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpClient\HttpClient.dproj">
-            <Dependencies/>
-        </Projects>
         <Projects Include="samples\tests\Delphi\Console\HorseCSConsoleTestServer.dproj">
             <Dependencies/>
         </Projects>
@@ -86,24 +80,6 @@
     <Target Name="HorseCSTestServer:Make">
         <MSBuild Projects="samples\tests\HorseCSTestServer.dproj" Targets="Make"/>
     </Target>
-    <Target Name="HttpServer">
-        <MSBuild Projects="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpServer\HttpServer.dproj"/>
-    </Target>
-    <Target Name="HttpServer:Clean">
-        <MSBuild Projects="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpServer\HttpServer.dproj" Targets="Clean"/>
-    </Target>
-    <Target Name="HttpServer:Make">
-        <MSBuild Projects="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpServer\HttpServer.dproj" Targets="Make"/>
-    </Target>
-    <Target Name="HttpClient">
-        <MSBuild Projects="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpClient\HttpClient.dproj"/>
-    </Target>
-    <Target Name="HttpClient:Clean">
-        <MSBuild Projects="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpClient\HttpClient.dproj" Targets="Clean"/>
-    </Target>
-    <Target Name="HttpClient:Make">
-        <MSBuild Projects="..\Delphi-Cross-Socket\Net\Demos\Delphi\HttpClient\HttpClient.dproj" Targets="Make"/>
-    </Target>
     <Target Name="HorseCSConsoleTestServer">
         <MSBuild Projects="samples\tests\Delphi\Console\HorseCSConsoleTestServer.dproj"/>
     </Target>
@@ -168,13 +144,13 @@
         <MSBuild Projects="..\horse-provider-mormot\samples\tests\Delphi\WinService\HorseMormotServiceTestServer.dproj" Targets="Make"/>
     </Target>
     <Target Name="Build">
-        <CallTarget Targets="Console;HorseProviderCrossSocket;HorseCSTestClient;HorseCSTestServer;HttpServer;HttpClient;HorseCSConsoleTestServer;HorseCSLinuxDaemonTestServer;HorseCSServiceTestServer;HorseMormotConsoleTestServer;HorseMormotLinuxDaemonTestServer;HorseMormotVCLTestServer;HorseMormotServiceTestServer"/>
+        <CallTarget Targets="Console;HorseProviderCrossSocket;HorseCSTestClient;HorseCSTestServer;HorseCSConsoleTestServer;HorseCSLinuxDaemonTestServer;HorseCSServiceTestServer;HorseMormotConsoleTestServer;HorseMormotLinuxDaemonTestServer;HorseMormotVCLTestServer;HorseMormotServiceTestServer"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="Console:Clean;HorseProviderCrossSocket:Clean;HorseCSTestClient:Clean;HorseCSTestServer:Clean;HttpServer:Clean;HttpClient:Clean;HorseCSConsoleTestServer:Clean;HorseCSLinuxDaemonTestServer:Clean;HorseCSServiceTestServer:Clean;HorseMormotConsoleTestServer:Clean;HorseMormotLinuxDaemonTestServer:Clean;HorseMormotVCLTestServer:Clean;HorseMormotServiceTestServer:Clean"/>
+        <CallTarget Targets="Console:Clean;HorseProviderCrossSocket:Clean;HorseCSTestClient:Clean;HorseCSTestServer:Clean;HorseCSConsoleTestServer:Clean;HorseCSLinuxDaemonTestServer:Clean;HorseCSServiceTestServer:Clean;HorseMormotConsoleTestServer:Clean;HorseMormotLinuxDaemonTestServer:Clean;HorseMormotVCLTestServer:Clean;HorseMormotServiceTestServer:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="Console:Make;HorseProviderCrossSocket:Make;HorseCSTestClient:Make;HorseCSTestServer:Make;HttpServer:Make;HttpClient:Make;HorseCSConsoleTestServer:Make;HorseCSLinuxDaemonTestServer:Make;HorseCSServiceTestServer:Make;HorseMormotConsoleTestServer:Make;HorseMormotLinuxDaemonTestServer:Make;HorseMormotVCLTestServer:Make;HorseMormotServiceTestServer:Make"/>
+        <CallTarget Targets="Console:Make;HorseProviderCrossSocket:Make;HorseCSTestClient:Make;HorseCSTestServer:Make;HorseCSConsoleTestServer:Make;HorseCSLinuxDaemonTestServer:Make;HorseCSServiceTestServer:Make;HorseMormotConsoleTestServer:Make;HorseMormotLinuxDaemonTestServer:Make;HorseMormotVCLTestServer:Make;HorseMormotServiceTestServer:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

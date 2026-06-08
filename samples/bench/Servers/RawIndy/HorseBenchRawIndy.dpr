@@ -74,9 +74,19 @@ var
 type
   TRawIndyHandler = class
   public
+    procedure HandleConnect(AContext: TIdContext);
     procedure HandleCommandGet(AContext: TIdContext;
       ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
   end;
+
+{ Disable Nagle (set TCP_NODELAY) on each accepted connection. Without this, on
+  Linux loopback the small keep-alive responses collide with the ~40 ms delayed
+  ACK -> a flat ~44 ms/request floor (~2270 RPS) that masks the real numbers.
+  mORMot does this by default; Indy/CrossSocket do not. }
+procedure TRawIndyHandler.HandleConnect(AContext: TIdContext);
+begin
+  AContext.Binding.UseNagle := False;
+end;
 
 procedure TRawIndyHandler.HandleCommandGet(AContext: TIdContext;
   ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
@@ -199,6 +209,7 @@ begin
   try
     GServer.DefaultPort  := BENCH_PORT_RAW_INDY;
     GServer.KeepAlive    := True;                 // HTTP/1.1 keep-alive (match the others)
+    GServer.OnConnect    := GHandler.HandleConnect;  // TCP_NODELAY per connection (see HandleConnect)
     GServer.OnCommandGet := GHandler.HandleCommandGet;
     if GMaxConn > 0 then
       GServer.MaxConnections := GMaxConn;         // Indy connection cap (NOT a WebBroker cap)
