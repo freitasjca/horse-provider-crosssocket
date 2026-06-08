@@ -19,9 +19,10 @@
     HorseBenchCrossSocket.exe --middleware  ← middleware mode (port 9012)
 
   Threading model:
-    IOCP (Windows) / epoll (Linux): 4–16 IO threads regardless of connection
-    count.  At concurrency = 500 all 500 requests are handled by the fixed IO
-    thread pool — this is the CrossSocket advantage the benchmark measures.
+    IOCP (Windows) / epoll (Linux): CPUCount*2+1 IO threads (e.g. 9 on a 4-core,
+    17 on an 8-core) regardless of connection count.  At concurrency = 500 all
+    500 requests are handled by the fixed IO thread pool — this is the
+    CrossSocket advantage the benchmark measures.
 }
 
 {$APPTYPE CONSOLE}

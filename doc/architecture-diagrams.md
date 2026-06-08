@@ -33,7 +33,7 @@ flowchart TD
     %% ── CrossSocket path ───────────────────────────────────────────────────
     subgraph CS["🟢  Horse + CrossSocket  ({$DEFINE HORSE_PROVIDER_CROSSSOCKET}, legacy alias: HORSE_CROSSSOCKET)"]
         direction TB
-        CS_ACCEPT["TCrossHttpServer\nIOCP (Windows) · epoll (Linux) · kqueue (macOS)\n────────────────────\nasync I/O event on IO thread pool\n4–16 threads regardless of connection count"]
+        CS_ACCEPT["TCrossHttpServer\nIOCP (Windows) · epoll (Linux) · kqueue (macOS)\n────────────────────\nasync I/O event on IO thread pool\nCPUCount*2+1 threads, fixed regardless of connection count\nOnConnected → TCP_NODELAY set on accept"]
         CS_VALIDATE{"TRequestBridge.Populate\nvalidates before touching the pool\n────────────────────\nmethod · host · smuggling · size · URL length"}
         CS_ERROR["SendError 400 / 405\nJSON error response via ICrossHttpResponse\n────────────────────\npool never acquired\nmiddleware never entered"]
         CS_POOL["THorseContextPool.Acquire\n────────────────────\npre-warmed 32–512 THorseContext objects\nno heap allocation on hot path"]
@@ -80,7 +80,7 @@ flowchart LR
         IO3["IO Thread 3  (IOCP / epoll)"]
         IO4["IO Thread 4  (IOCP / epoll)"]
         HANDLES["10 000+ connection handles\n(kernel-managed, no per-connection thread)\nidle connections cost nothing"]
-        NOTE["✅  4–16 IO threads\nregardless of connection count\nnear-zero idle CPU"]
+        NOTE["✅  CPUCount*2+1 IO threads\n(e.g. 9 on a 4-core, 17 on an 8-core)\nfixed regardless of connection count\nnear-zero idle CPU"]
 
         IO1 ~~~ IO2 ~~~ IO3 ~~~ IO4 ~~~ HANDLES ~~~ NOTE
     end
