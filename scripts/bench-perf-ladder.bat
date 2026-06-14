@@ -15,11 +15,19 @@ REM  --maxconn 256 to every Horse server so the cap is lifted and every request
 REM  does real work (0 5xx) -- the RPS then reflects true throughput.
 REM
 REM  Tiers measured (one server at a time, all others killed), RUNS averaged:
-REM    raw-mormot     bare / +headers          (HorseBenchRawMormot,  9005)
+REM    raw-mormot     bare / +headers / (async ×2) / (httpapi ×2)  (HorseBenchRawMormot, 9005)
+REM      NOTE: the (httpapi) rows use Windows http.sys and need this script run as
+REM      Administrator, OR a one-time per-port urlacl, e.g.:
+REM        netsh http add urlacl url=http://+:9003/ user=Everyone
+REM        netsh http add urlacl url=http://+:9005/ user=Everyone
+REM        netsh http add urlacl url=http://+:9013/ user=Everyone
+REM      Without it the (httpapi) cells report ERR/noListen and can be ignored.
 REM    raw-crosssock  bare / +headers          (HorseBenchRawCrossSocket, 9004)
 REM    Horse+Indy        bare / +headers / +cors   (9001 / 9011)
 REM    Horse+CrossSocket bare / +headers / +cors   (9002 / 9012)
 REM    Horse+mORMot      bare / +headers / +cors   (9003 / 9013)
+REM    Horse+mORMot      bare / +headers (async)   (THttpAsyncServer via --async)
+REM    Horse+mORMot      bare / +headers (httpapi) (http.sys via --httpapi; see urlacl note)
 REM
 REM  Output: a table (console + bench-perf-ladder-result.txt) with, per tier,
 REM  the averaged Reqs/sec plus the last run's 2xx / 5xx / others and the full
@@ -122,6 +130,13 @@ call :HEADERROW
 
 call :CELL HorseBenchRawMormot.exe       9005 ""                                   "raw-mormot bare"
 call :CELL HorseBenchRawMormot.exe       9005 "--headers"                          "raw-mormot +headers"
+REM raw-mormot async backend (THttpAsyncServer) -- transport baseline for the async A/B
+call :CELL HorseBenchRawMormot.exe       9005 "--async"                            "raw-mormot bare (async)"
+call :CELL HorseBenchRawMormot.exe       9005 "--async --headers"                  "raw-mormot +headers (async)"
+REM raw-mormot http.sys backend (THttpApiServer) -- needs admin OR a urlacl for :9005
+REM   netsh http add urlacl url=http://+:9005/ user=Everyone
+call :CELL HorseBenchRawMormot.exe       9005 "--httpapi"                          "raw-mormot bare (httpapi)"
+call :CELL HorseBenchRawMormot.exe       9005 "--httpapi --headers"                "raw-mormot +headers (httpapi)"
 call :CELL HorseBenchRawCrossSocket.exe  9004 ""                                   "raw-crosssock bare"
 call :CELL HorseBenchRawCrossSocket.exe  9004 "--headers"                          "raw-crosssock +headers"
 call :CELL HorseBenchRawIndy.exe         9006 "--listenqueue %LISTENQ%"            "raw-indy bare"
@@ -135,6 +150,13 @@ call :CELL HorseBenchCrossSocket.exe     9012 "--cors --maxconn %MAXCONN% --list
 call :CELL HorseBenchMormot.exe          9003 "--maxconn %MAXCONN% --listenqueue %LISTENQ%"                 "Horse+mORMot bare"
 call :CELL HorseBenchMormot.exe          9013 "--headers-only --maxconn %MAXCONN% --listenqueue %LISTENQ%" "Horse+mORMot +headers"
 call :CELL HorseBenchMormot.exe          9013 "--cors --maxconn %MAXCONN% --listenqueue %LISTENQ%"          "Horse+mORMot +cors"
+REM mORMot async backend (THttpAsyncServer) -- A/B vs the thread-pool rows above
+call :CELL HorseBenchMormot.exe          9003 "--async --maxconn %MAXCONN%"                                 "Horse+mORMot bare (async)"
+call :CELL HorseBenchMormot.exe          9013 "--async --headers-only --maxconn %MAXCONN%"                 "Horse+mORMot +headers (async)"
+REM mORMot http.sys backend (THttpApiServer) -- needs admin OR urlacl for :9003 and :9013
+REM   netsh http add urlacl url=http://+:9003/ user=Everyone  (and :9013)
+call :CELL HorseBenchMormot.exe          9003 "--httpapi --maxconn %MAXCONN%"                               "Horse+mORMot bare (httpapi)"
+call :CELL HorseBenchMormot.exe          9013 "--httpapi --headers-only --maxconn %MAXCONN%"               "Horse+mORMot +headers (httpapi)"
 
 echo.
 echo ================================================================================
@@ -221,6 +243,10 @@ REM ============================================================================
     set _P95=-
     set _P99=-
     call :PRINTROW
+    REM http.sys (--httpapi) cells fail to listen when the URL ACL is missing —
+    REM point the operator straight at the fix instead of a bare "noListen".
+    echo !_ARGS! | findstr /I "httpapi" >nul 2>&1
+    if not errorlevel 1 echo        NOTE: http.sys needs a URL ACL. Run this script elevated, or once: netsh http add urlacl url=http://+:!_PORT!/ user=%USERDOMAIN%\%USERNAME%  (see bench-perf-ladder-windows.md section 3)
     goto :eof
     :LUP
 
