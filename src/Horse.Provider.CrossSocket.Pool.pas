@@ -1,5 +1,7 @@
 ﻿unit Horse.Provider.CrossSocket.Pool;
 
+{$IF DEFINED(FPC)}{$MODE DELPHI}{$H+}{$ENDIF}
+
 {
   Horse CrossSocket Provider  -  Context Object Pool
   ---------------------------------------------------
@@ -87,10 +89,17 @@
 interface
 
 uses
+{$IF DEFINED(FPC)}
+  SysUtils,
+  Classes,
+  SyncObjs,
+  Generics.Collections,
+{$ELSE}
   System.SysUtils,
   System.Classes,
   System.SyncObjs,
   System.Generics.Collections,
+{$ENDIF}
   Horse.Request,
   Horse.Response;
 

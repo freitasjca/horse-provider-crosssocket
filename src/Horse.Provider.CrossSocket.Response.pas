@@ -1,4 +1,6 @@
-unit Horse.Provider.CrossSocket.Response;
+﻿unit Horse.Provider.CrossSocket.Response;
+
+{$IF DEFINED(FPC)}{$MODE DELPHI}{$H+}{$ENDIF}
 
 {
   Horse CrossSocket Provider  -  Response Bridge  (hardened)
@@ -99,10 +101,18 @@ unit Horse.Provider.CrossSocket.Response;
 interface
 
 uses
+{$IF DEFINED(FPC)}
+  SysUtils,
+  Classes,
+  Generics.Collections,
+  fpHTTP,
+  HTTPDefs,
+{$ELSE}
   System.SysUtils,
   System.Classes,
   System.Generics.Collections,
   Web.HTTPApp,
+{$ENDIF}
   Net.CrossHttpServer,
   Net.CrossHttpParams,
   Horse.Response;
@@ -150,7 +160,7 @@ class procedure TResponseBridge.Flush(
 );
 var
   CT:      string;
-  LRawRes: TWebResponse;
+  LRawRes: {$IF DEFINED(FPC)}TResponse{$ELSE}TWebResponse{$ENDIF};
 begin
   // [IMP-4] Do not attempt to write a response that CrossSocket has already
   // sent (e.g. by middleware that called ICrossHttpResponse.Send directly).
@@ -227,17 +237,31 @@ class procedure TResponseBridge.CopyHeaders(
   end;
 
 var
+  {$IF NOT DEFINED(FPC)}
   Pair:      TPair<string, string>;
-  LRawRes:   TWebResponse;
+  {$ENDIF}
+  LRawRes:   {$IF DEFINED(FPC)}TResponse{$ELSE}TWebResponse{$ENDIF};
   I:         Integer;
   LName:     string;
   LValue:    string;
 begin
   // 1. Copy headers from THorseResponse.CustomHeaders (PATCH-RES-1/3)
   //    Written by Res.AddHeader — the normal Horse API path.
+  //    Delphi: CustomHeaders is TDictionary<string,string> — iterate TPair.
+  //    FPC:    CustomHeaders is TStringList — iterate by index via Names/ValueFromIndex.
   if AHorseRes.CustomHeaders <> nil then
+  {$IF NOT DEFINED(FPC)}
     for Pair in AHorseRes.CustomHeaders do
       EmitHeader(Pair.Key, Pair.Value);
+  {$ELSE}
+    for I := 0 to AHorseRes.CustomHeaders.Count - 1 do
+    begin
+      LName  := AHorseRes.CustomHeaders.Names[I];
+      LValue := AHorseRes.CustomHeaders.ValueFromIndex[I];
+      if LName <> '' then
+        EmitHeader(LName, LValue);
+    end;
+  {$ENDIF}
 
   // 2. PATCH-RES-6 — Copy headers from the RawWebResponse adapter.
   //    Middleware that calls Res.RawWebResponse.SetCustomHeader (e.g. Horse.CORS)
@@ -282,7 +306,7 @@ class procedure TResponseBridge.WriteBody(
 var
   Buf:      TBytes;
   Stream:   TStream;
-  LRawRes:  TWebResponse;
+  LRawRes:  {$IF DEFINED(FPC)}TResponse{$ELSE}TWebResponse{$ENDIF};
   LContent: string;
 begin
   // ContentStream: PATCH-RES-4 shadow field (nil when not set)

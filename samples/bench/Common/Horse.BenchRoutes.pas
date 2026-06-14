@@ -4,8 +4,9 @@ unit Horse.BenchRoutes;
   Horse Performance Benchmark — Shared Route Registration
   ========================================================
 
-  Three provider-agnostic routes used by all three bench server binaries
-  (HorseBenchIndy, HorseBenchCrossSocket, HorseBenchMormot).
+  Routes used by all bench server binaries (Delphi and Lazarus builds):
+    HorseBenchIndy, HorseBenchCrossSocket, HorseBenchMormot  (Delphi)
+    HorseBenchCrossSocket, HorseBenchFPCHttp                 (Lazarus)
 
   Routes:
     GET  /ping   — minimal routing overhead; no body
@@ -35,6 +36,13 @@ const
   BENCH_PORT_RAW_MORMOT       = 9005;
   BENCH_PORT_RAW_INDY         = 9006;   // pure TIdHTTPServer, no WebBroker
 
+  // Lazarus-only server (FPC default fphttpserver / HTTPApplication provider)
+  BENCH_PORT_FPC_HTTP_BARE    = 9007;
+
+  // Lazarus-only raw transport baseline: pure fphttpserver, no Horse.
+  // FPC analog of BENCH_PORT_RAW_INDY (raw default self-hosted transport).
+  BENCH_PORT_RAW_FPC_HTTP     = 9008;
+
   ALLOC_BODY_SIZE = 1024;             // bytes returned by GET /alloc
 
 procedure RegisterBenchRoutes;
@@ -51,40 +59,46 @@ uses
 {$ENDIF}
   Horse;
 
-procedure RegisterBenchRoutes;
-begin
-  // ── GET /ping — pure routing overhead ──────────────────────────────────
-  // Returns a fixed 4-byte string.  No body parsing, no serialisation.
-  // Measures the provider's per-request overhead at its lowest.
-  THorse.Get('/ping',
-    procedure(Req: THorseRequest; Res: THorseResponse)
-    begin
-      Res.ContentType('text/plain; charset=utf-8');
-      Res.Send('pong');
-    end);
+// Route handlers are written as plain unit-scope procedures so the unit
+// compiles on FPC without HORSE_FPC_FUNCTIONREFERENCES (anonymous procedures
+// require {$MODESWITCH FUNCTIONREFERENCES+}, which only stable Horse builds
+// enable). Delphi auto-promotes a plain procedure to its reference-to type;
+// FPC's {$MODE DELPHI} accepts the same form. Do NOT add `@` — that would
+// force a raw Pointer and fail Delphi's THorseCallbackRequestResponse type
+// check.
 
-  // ── POST /echo — body read + write ─────────────────────────────────────
+procedure BenchPing(Req: THorseRequest; Res: THorseResponse);
+begin
+  Res.ContentType('text/plain; charset=utf-8');
+  Res.Send('pong');
+end;
+
+procedure BenchEcho(Req: THorseRequest; Res: THorseResponse);
+begin
   // Req.Body: string is safe on all three providers:
   //   CrossSocket — PATCH-REQ-9 caches the UTF-8-decoded body in FBodyString
   //   mORMot      — body is fully buffered in Ctxt.InContent before handler
   //   Indy        — body is buffered by TIdHTTPServer before handler
-  // No stream ownership concern: using the string accessor only.
-  THorse.Post('/echo',
-    procedure(Req: THorseRequest; Res: THorseResponse)
-    begin
-      Res.ContentType('text/plain; charset=utf-8');
-      Res.Send(Req.Body);
-    end);
+  Res.ContentType('text/plain; charset=utf-8');
+  Res.Send(Req.Body);
+end;
 
-  // ── GET /alloc — 1 KB allocation + serialisation ───────────────────────
+procedure BenchAlloc(Req: THorseRequest; Res: THorseResponse);
+begin
   // Forces a heap allocation (StringOfChar) and a string send on every
-  // request.  Useful for measuring allocator pressure under concurrent load.
-  THorse.Get('/alloc',
-    procedure(Req: THorseRequest; Res: THorseResponse)
-    begin
-      Res.ContentType('text/plain; charset=utf-8');
-      Res.Send(StringOfChar('X', ALLOC_BODY_SIZE));
-    end);
+  // request — measures allocator pressure under concurrent load.
+  Res.ContentType('text/plain; charset=utf-8');
+  Res.Send(StringOfChar('X', ALLOC_BODY_SIZE));
+end;
+
+procedure RegisterBenchRoutes;
+begin
+  // ── GET /ping — pure routing overhead, fixed 4-byte string ──────────────
+  THorse.Get('/ping',  BenchPing);
+  // ── POST /echo — body read + write ─────────────────────────────────────
+  THorse.Post('/echo', BenchEcho);
+  // ── GET /alloc — 1 KB allocation + serialisation ───────────────────────
+  THorse.Get('/alloc', BenchAlloc);
 end;
 
 end.

@@ -41,6 +41,70 @@ THorseResponse.RawWebResponse                            <-- returns TWebRespons
 
 ---
 
+## Binding models — socket bind vs kernel URL registration
+
+The adapter pattern above is about *translating a request*. Orthogonal to it is **how your transport attaches to the network** — and this is where providers genuinely differ. There are two models a self-hosted provider can use; knowing which one your transport uses decides what the provider's `Listen`/`ListenWithConfig` must do.
+
+### Model A — socket bind (the common case)
+
+CrossSocket, mORMot's `THttpServer`/`THttpAsyncServer`, Indy, `fphttpserver`, nghttp2, libuv, QUIC libraries — all of these **own a socket in user space**:
+
+```
+Listen(port) -> bind() + listen() + accept loop  (epoll / IOCP / kqueue / threads)
+             -> parse HTTP in your process
+             -> dispatch to OnRequest
+```
+
+The constructor (or `Listen`) takes the **port** and binds immediately. The process holds the port exclusively. There is no registration step and no special rights — the port just has to be free. **If your transport is like this, follow Steps 1–7 verbatim.**
+
+### Model B — kernel URL registration (http.sys)
+
+Windows **http.sys** (mORMot's `THttpApiServer`, exposed by `horse-provider-mormot` as `ServerKind = mskHttpApi`) is different: it creates **no socket**. Instead it opens a *request queue* in the kernel HTTP driver and **registers a URL prefix** the kernel should route to that queue:
+
+```
+Create(queueName)              <-- NO port here
+AddUrl('', '9003', False, '+') <-- "route http://+:9003/* to my queue"
+                               -> kernel does accept() + HTTP parse in kernel mode
+                               -> hands the parsed request to your queue
+                               -> dispatch to OnRequest  (same as Model A from here on)
+```
+
+Everything downstream of `OnRequest` — the bridges, the pool, the middleware — is **identical**. Only *how the request arrives* changes.
+
+#### `AddUrl` — the registration call
+
+```pascal
+ApiServer.AddUrl('', StringToUtf8(IntToStr(APort)), False, '+', True);
+//               ^root  ^port                       ^https ^host ^registerUri
+```
+
+| Arg | Value used | Meaning |
+|---|---|---|
+| `aRoot` | `''` | URL path prefix = `/` → all paths on the port route here (Horse does its own routing). `'api'` would route only `/api/*` — this is how http.sys shares one port between apps by path. |
+| `aPort` | `'9003'` | Port registered in the kernel namespace (not a socket bind). |
+| `Https` | `False` | `http` vs `https` prefix. |
+| `aDomainName` | `'+'` | **Strong wildcard** — every host/IP on the port (highest precedence). `'*'` is the *weak* wildcard (only hosts no other app claimed); a literal host binds just that name. |
+| `aRegisterUri` | `True` | Add the reservation now. |
+
+#### Three consequences for the provider code
+
+1. **Permission, not just a free port.** The http.sys URL namespace is a shared system resource, so registering needs **Administrator rights** or a one-time reservation:
+   `netsh http add urlacl url=http://+:9003/ user=<account>`.
+   `AddUrl` **returns an error code** (`0` = NO_ERROR, `ERROR_ACCESS_DENIED` otherwise) — it does **not** raise. Check the result and fail loudly, or the server comes up bound to nothing and silently drops every request.
+
+2. **Different base class & no port in the constructor.** `THttpApiServer` descends from `THttpServerGeneric`, not the socket base `THttpServerSocketGeneric`. So the field that holds the server must be typed at the common ancestor (`THttpServerGeneric`), the constructor takes a *queue name* (port comes via `AddUrl`), and `WaitStarted` — whose signature differs per family — must be called on the concrete type, not the base.
+
+3. **Windows-only.** Guard every reference with `{$IFDEF MSWINDOWS}` (mORMot gates `THttpApiServer` behind `{$ifdef USEWININET}`); raise a clear error if selected elsewhere.
+
+#### Why anyone would want Model B
+
+- **Port sharing.** Because routing is by URL prefix in the kernel, IIS on `http://+:80/site/` and your Horse app on `http://+:80/api/` can coexist on port 80 — impossible with a socket bind.
+- Kernel-mode TLS termination, kernel response caching, and the OS absorbing connection floods before they reach your process.
+
+> **Worked reference:** `horse-provider-mormot` implements both models behind one config field — `THorseMormotConfig.ServerKind` selects `mskThreadPool`/`mskAsync` (Model A) or `mskHttpApi` (Model B). See that provider's `Horse.Provider.Mormot.pas` `InternalListen` and `doc/implementation-notes.md` for the concrete `case`-per-backend construction.
+
+---
+
 ## Prerequisites
 
 Your Horse fork must include these patched units (all in `patches/horse/src/`):

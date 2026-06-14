@@ -17,11 +17,25 @@
   Run sequence:
     HorseBenchMormot.exe            ← bare mode (port 9003)
     HorseBenchMormot.exe --middleware  ← middleware mode (port 9013)
+    HorseBenchMormot.exe --async    ← host THttpAsyncServer instead of THttpServer
+    HorseBenchMormot.exe --httpapi  ← host Windows http.sys (THttpApiServer)
+
+  Optional flags (pick at most one backend; combine with any mode):
+    --async    Hosts mORMot's THttpAsyncServer (non-blocking event loop) instead
+               of the default THttpServer thread pool, via
+               THorseMormotConfig.ServerKind = mskAsync. e.g. --async --headers-only.
+    --httpapi  Hosts the Windows http.sys kernel-mode server (THttpApiServer,
+               ServerKind = mskHttpApi). WINDOWS ONLY — the provider raises at
+               Listen elsewhere. Needs Administrator rights or a one-time
+               urlacl:  netsh http add urlacl url=http://+:9003/ user=<account>
+               (and :9013 for the middleware port). If both --httpapi and --async
+               are given, --httpapi wins.
 
   Threading model:
-    mORMot2 THttpServer uses IOCP (Windows) / epoll (Linux) with a configurable
-    thread pool (default: 32 worker threads on Windows IOCP).  Suitable for high
-    concurrency workloads without per-connection thread allocation.
+    THttpServer (default) uses a thread pool (default 32) — one thread per
+    concurrent request. THttpAsyncServer (--async) uses a non-blocking IOCP
+    (Windows) / epoll (Linux) / kqueue event loop, scaling past thread-per-
+    request; its thread count then sizes the async R/W workers, not clients.
 
   Required search path entries (Project → Options → Library path):
     <mormot2-repo>\src\...           (mORMot2 source tree)
@@ -41,6 +55,7 @@ uses
   System.StrUtils,
   Horse,
   Horse.Provider.Mormot,
+  Horse.Provider.Mormot.Config,   // THorseMormotConfig + TMormotServerKind (--async)
   Horse.Middleware.RequestGuard,
   Horse.Middleware.SecurityHeaders,
   Horse.CORS,
@@ -60,6 +75,8 @@ var
   GPort:          Integer;
   GMaxConn:       Integer;   // --maxconn N : THorse.MaxConnections override (0 = leave default)
   GListenQueue:   Integer;   // --listenqueue N : accepted for parity; Indy-only (ignored here)
+  GAsync:         Boolean;   // --async   : host THttpAsyncServer instead of THttpServer
+  GHttpApi:       Boolean;   // --httpapi : host Windows http.sys THttpApiServer (Win only)
 
 {$IFDEF MSWINDOWS}
 function CtrlHandler(dwCtrlType: DWORD): BOOL; stdcall;
@@ -113,6 +130,8 @@ begin
   GModeCors      := HasSwitch('cors');
   GMaxConn       := GetSwitchInt('maxconn', 0);
   GListenQueue   := GetSwitchInt('listenqueue', 0);
+  GAsync         := HasSwitch('async');
+  GHttpApi       := HasSwitch('httpapi');
   GAnyMiddleware := GModeBoth or GModeGuard or GModeHeaders or GModeHdrBefore or GModeCors;
   GPort          := BASE_PORT + (BENCH_PORT_MW_OFFSET * Ord(GAnyMiddleware));
 
@@ -172,8 +191,10 @@ begin
 
   RegisterBenchRoutes;
 
-  WriteLn(Format('[HorseBench/mORMot] Listening on http://127.0.0.1:%d  [%s]',
-    [GPort, GModeLabel]));
+  WriteLn(Format('[HorseBench/mORMot] Listening on http://127.0.0.1:%d  [%s]  server=%s',
+    [GPort, GModeLabel,
+     IfThen(GHttpApi, 'THttpApiServer (http.sys)',
+       IfThen(GAsync, 'THttpAsyncServer', 'THttpServer'))]));
   WriteLn('Active provider class: ' + THorse.ClassName);
   WriteLn('Press Ctrl-C to stop.');
 
@@ -200,7 +221,22 @@ begin
     {$IFEND}
   end;
 
-  THorse.Listen(GPort);
+  // --async / --httpapi: select the mORMot backend at runtime via
+  // THorseMormotConfig.ServerKind. Routes/middleware/bridge are identical, so
+  // this is a clean A/B of the backends. --httpapi (http.sys) is Windows-only —
+  // the provider raises at Listen on other platforms, and needs admin rights or
+  // a urlacl (netsh http add urlacl url=http://+:<port>/ user=<acct>).
+  if GHttpApi or GAsync then
+  begin
+    var LConfig := THorseMormotConfig.Default;
+    if GHttpApi then
+      LConfig.ServerKind := mskHttpApi
+    else
+      LConfig.ServerKind := mskAsync;
+    THorse.ListenWithConfig(GPort, LConfig);
+  end
+  else
+    THorse.Listen(GPort);
 
   WriteLn('[HorseBench/mORMot] Stopped cleanly.');
 end.

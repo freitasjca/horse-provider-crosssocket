@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="13"/>
+    <PathDelim Value="\"/>
+    <General>
+      <Flags>
+        <MainUnitHasCreateFormStatements Value="False"/>
+        <MainUnitHasTitleStatement Value="False"/>
+        <MainUnitHasScaledStatement Value="False"/>
+      </Flags>
+      <SessionStorage Value="InProjectDir"/>
+      <Title Value="HorseBenchCrossSocket"/>
+      <UseAppBundle Value="False"/>
+      <ResourceType Value="res"/>
+    </General>
+    <BuildModes>
+      <Item Name="Default" Default="True"/>
+    </BuildModes>
+    <PublishOptions>
+      <Version Value="2"/>
+      <UseFileFilters Value="True"/>
+    </PublishOptions>
+    <RunParams>
+      <FormatVersion Value="2"/>
+    </RunParams>
+    <RequiredPackages>
+      <Item>
+        <PackageName Value="LazUtils"/>
+      </Item>
+    </RequiredPackages>
+    <Units>
+      <Unit>
+        <Filename Value="HorseBenchCrossSocket.lpr"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\Common\Horse.BenchRoutes.pas"/>
+      </Unit>
+    </Units>
+  </ProjectOptions>
+  <CompilerOptions>
+    <Version Value="11"/>
+    <PathDelim Value="\"/>
+    <Target>
+      <Filename Value="HorseBenchCrossSocket"/>
+    </Target>
+    <SearchPaths>
+      <IncludeFiles Value="$(ProjOutDir);..\..\..\..\..\..\Delphi-Cross-Socket;..\..\..\..\..\..\Delphi-Cross-Socket\CnPack\Common"/>
+      <Libraries Value="C:\msys64\mingw64\lib\;C:\msys64\mingw64\lib\gcc\x86_64-w64-mingw32\16.1.0\"/>
+      <OtherUnitFiles Value="..\..\..\..\..\..\horse\src;..\..\..\..\..\..\horse-provider-crosssocket\src;..\..\..\..\..\..\Delphi-Cross-Socket;..\..\..\..\..\..\Delphi-Cross-Socket\Net;..\..\..\..\..\..\Delphi-Cross-Socket\DelphiToFPC;..\..\..\..\..\..\Delphi-Cross-Socket\CnPack\Common;..\..\..\..\..\..\Delphi-Cross-Socket\CnPack\Crypto;..\..\..\..\..\..\Delphi-Cross-Socket\Utils;..\..\..\..\..\..\horse-request-guard\src;..\..\..\..\..\..\horse-security-headers\src;..\..\..\..\..\..\horse-cors\src"/>
+      <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
+    </SearchPaths>
+    <Other>
+      <CustomOptions Value="-k-lssp_nonshared"/>
+    </Other>
+  </CompilerOptions>
+  <Debugging>
+    <Exceptions>
+      <Item>
+        <Name Value="EAbort"/>
+      </Item>
+      <Item>
+        <Name Value="ECodetoolError"/>
+      </Item>
+      <Item>
+        <Name Value="EFOpenError"/>
+      </Item>
+    </Exceptions>
+  </Debugging>
+</CONFIG>

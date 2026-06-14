@@ -20,6 +20,8 @@
 
   Run:
     HorseBenchMormot_diag.exe --middleware    ← listens on 9013, captures 500s
+    HorseBenchMormot_diag.exe --middleware --async  ← same, on THttpAsyncServer
+    HorseBenchMormot_diag.exe --middleware --httpapi ← same, on http.sys (Win; admin/urlacl)
     bombardier -c 100 -n 200000 --http1 http://127.0.0.1:9013/ping
 }
 
@@ -38,6 +40,7 @@ uses
   System.Generics.Defaults,
   Horse,
   Horse.Provider.Mormot,
+  Horse.Provider.Mormot.Config,   // THorseMormotConfig + TMormotServerKind (--async)
   Horse.Exception.Interrupted,
   Horse.Middleware.RequestGuard,
   Horse.Middleware.SecurityHeaders,
@@ -55,6 +58,8 @@ var
   GPort:          Integer;
   GMaxConn:       Integer;   // --maxconn N : THorse.MaxConnections override (0 = leave default)
   GListenQueue:   Integer;   // --listenqueue N : accepted for parity; Indy-only (ignored here)
+  GAsync:         Boolean;   // --async   : host THttpAsyncServer instead of THttpServer
+  GHttpApi:       Boolean;   // --httpapi : host Windows http.sys THttpApiServer (Win only)
   GLogLock:       TCriticalSection;
   GErrorCounts:   TDictionary<string, Integer>;
   GTotalErrors:   Integer;
@@ -204,6 +209,8 @@ begin
   GModeHeaders   := HasSwitch('headers-only');
   GMaxConn       := GetSwitchInt('maxconn', 0);
   GListenQueue   := GetSwitchInt('listenqueue', 0);
+  GAsync         := HasSwitch('async');
+  GHttpApi       := HasSwitch('httpapi');
   GAnyMiddleware := GModeBoth or GModeGuard or GModeHeaders;
   GPort          := BASE_PORT + (BENCH_PORT_MW_OFFSET * Ord(GAnyMiddleware));
   if GModeBoth then GModeLabel := '+middleware'
@@ -259,8 +266,10 @@ begin
 
     RegisterBenchRoutes;
 
-    WriteLn(Format('[HorseBench/mORMot DIAG] Listening on http://127.0.0.1:%d  [%s]',
-      [GPort, GModeLabel]));
+    WriteLn(Format('[HorseBench/mORMot DIAG] Listening on http://127.0.0.1:%d  [%s]  server=%s',
+      [GPort, GModeLabel,
+       IfThen(GHttpApi, 'THttpApiServer (http.sys)',
+         IfThen(GAsync, 'THttpAsyncServer', 'THttpServer'))]));
     WriteLn(Format('[HorseBench/mORMot DIAG] Capturing 500-causing exceptions to: %s',
       [GLogFile]));
     WriteLn('Active provider class: ' + THorse.ClassName);
@@ -286,7 +295,20 @@ begin
       {$IFEND}
     end;
 
-    THorse.Listen(GPort);
+    // --async / --httpapi: diagnose a non-default backend (different threading
+    // model — a concurrency-related 500 may surface only there). http.sys is
+    // Windows-only + needs admin/urlacl; --httpapi wins over --async if both set.
+    if GHttpApi or GAsync then
+    begin
+      var LDiagConfig := THorseMormotConfig.Default;
+      if GHttpApi then
+        LDiagConfig.ServerKind := mskHttpApi
+      else
+        LDiagConfig.ServerKind := mskAsync;
+      THorse.ListenWithConfig(GPort, LDiagConfig);
+    end
+    else
+      THorse.Listen(GPort);
 
     WriteSummary;
     WriteLn('[HorseBench/mORMot DIAG] Stopped cleanly.');

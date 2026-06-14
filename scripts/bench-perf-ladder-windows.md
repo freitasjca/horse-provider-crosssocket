@@ -111,6 +111,69 @@ Output columns (same as Linux):
 `fraction retained = row_RPS / ceiling`. Any non-zero `5xx`/`others` means that
 row's RPS is **inflated by failures** — ignore it and fix the cause (see §4).
 
+### mORMot backend A/B — thread-pool / async / http.sys
+
+The ladder runs each mORMot tier on **all three** of mORMot2's HTTP servers:
+
+```
+ raw-mormot bare                 ← THttpServer     (thread pool, default)
+ raw-mormot bare (async)         ← THttpAsyncServer (--async, non-blocking IOCP)
+ raw-mormot bare (httpapi)       ← THttpApiServer   (--httpapi, Windows http.sys)
+ Horse+mORMot bare               ← THttpServer
+ Horse+mORMot bare (async)       ← THttpAsyncServer
+ Horse+mORMot bare (httpapi)     ← THttpApiServer
+```
+
+The `(async)` / `(httpapi)` rows come from the bench servers' `--async` / `--httpapi`
+switches (`THorseMormotConfig.ServerKind = mskAsync` / `mskHttpApi`). Read them as deltas:
+
+- **`raw-mormot bare (async)` vs `raw-mormot bare`** — the *transport-only* effect of the
+  async engine, no Horse in the path.
+- **`Horse+mORMot bare (async)` vs `Horse+mORMot bare`** — the same swap *with* the Horse
+  pipeline; comparing the deltas isolates transport gains from framework interaction.
+- The `(httpapi)` rows are the same comparison for the Windows kernel-mode http.sys server.
+
+Expect async to hold throughput and lower the P99/P99.9 tail at high `c` (≥100); at low `c`
+the two are usually within noise. `--async` accepts `--maxconn` but ignores `--listenqueue`
+(Indy-only), so the async rows omit it. Building the `--async` server needs
+`mormot.net.async` on the project search path (it ships in the same mORMot2 `src\net`).
+
+#### http.sys rows show `ERR  noListen` — fix the URL ACL
+
+Unlike the socket backends, `--httpapi` (http.sys) does **not** `bind()` a port — it
+*registers a URL prefix* with the kernel, which needs **Administrator rights or a one-time
+URL reservation**. Without one, the server's `AddUrl` fails with `ERROR_ACCESS_DENIED`, it
+exits, and the cell reports `ERR  noListen`. (You don't see the real message because the
+ladder redirects each server's output to `nul`.)
+
+Confirm by running one server by hand so its stdout is visible:
+
+```bat
+HorseBenchRawMormot.exe --httpapi
+REM prints "http.sys AddUrl failed … run as Administrator, or netsh …" instead of "Listening…"
+```
+
+Fix — **pick one:**
+
+- **Pre-authorize the ports once** (in an *elevated* `cmd`), then run the ladder normally:
+
+  ```bat
+  netsh http add urlacl url=http://+:9003/ user=%USERDOMAIN%\%USERNAME%
+  netsh http add urlacl url=http://+:9005/ user=%USERDOMAIN%\%USERNAME%
+  netsh http add urlacl url=http://+:9013/ user=%USERDOMAIN%\%USERNAME%
+  ```
+  (9005 = raw-mormot, 9003/9013 = Horse+mORMot http.sys ports.) Use your account, **not**
+  `user=Everyone` — "Everyone" is localized on non-English Windows and fails; the locale-safe
+  Everyone SID is `user=S-1-1-0`.
+
+- **Or run the whole ladder from an elevated `cmd`** — with admin rights `AddUrl` reserves the
+  URL itself, no netsh needed (but every tier then runs elevated).
+
+Manage reservations with `netsh http show urlacl` and
+`netsh http delete urlacl url=http://+:9005/`. The non-http.sys rows never need this — they
+bind a socket directly. If you don't care about the kernel-mode comparison, the `(httpapi)`
+`ERR` rows are harmless to ignore.
+
 ---
 
 ## 4. Verify the build is correct (avoid the mis-build)
@@ -141,6 +204,10 @@ HorseBenchCrossSocket.exe --headers-only
   netsh int ipv4 set dynamicport tcp start=10000 num=55000
   ```
   (bombardier reuses keep-alive connections, so this rarely bites until c is large.)
+- **`ERR  noListen` on the `(httpapi)` rows** = http.sys URL reservation missing.
+  Run the netsh `urlacl` commands once (elevated) for ports 9003/9005/9013, or run the
+  ladder elevated — see "http.sys rows show ERR noListen" in §3. Harmless to ignore if you
+  don't need the kernel-mode comparison.
 - **Run from a local disk** — not OneDrive/network paths.
 - **Hybrid CPUs:** confirm High Performance actually parks work on P-cores; the
   Delphi client and bombardier can even *reverse* the PC1/PC2 ranking under Balanced.

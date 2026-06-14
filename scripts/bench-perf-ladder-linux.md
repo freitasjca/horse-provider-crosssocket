@@ -146,6 +146,33 @@ same columns as Windows:
 `fraction retained = row_RPS / ceiling`. Any non-zero `5xx`/`others` means that
 row's RPS is inflated by failures — ignore it and check the build/limits.
 
+### mORMot backend A/B — thread-pool vs async
+
+The ladder runs each mORMot tier on **both** of mORMot2's socket servers:
+
+```
+ raw-mormot bare                 ← THttpServer  (thread pool, default)
+ raw-mormot bare (async)         ← THttpAsyncServer (--async, non-blocking event loop)
+ Horse+mORMot bare               ← THttpServer
+ Horse+mORMot bare (async)       ← THttpAsyncServer
+```
+
+The `(async)` rows are produced by the bench servers' `--async` switch
+(`THorseMormotConfig.ServerKind = mskAsync`). Read them as two deltas:
+
+- **`raw-mormot bare (async)` vs `raw-mormot bare`** — the *transport-only* effect of
+  the async engine, with no Horse in the path.
+- **`Horse+mORMot bare (async)` vs `Horse+mORMot bare`** — the same swap *with* the Horse
+  pipeline; comparing the two deltas isolates transport gains from framework interaction.
+
+Expect async to hold throughput and lower the P99/P99.9 tail at high `c` (≥100), where
+thread-per-request scheduling pressure shows on the thread-pool rows. At low `c` the two
+are usually within noise. `--async` accepts `--maxconn` but ignores `--listenqueue`
+(Indy-only), so async rows omit it.
+
+> Use `./bench-perf-ladder.sh <c> <n> <runs> lazarus` to run the FPC builds (rows tagged
+> `(FPC async)`), or `… both` to pair Delphi and FPC mORMot rows side by side.
+
 ---
 
 ## 4. What to expect vs Windows (and what's different)
@@ -158,6 +185,22 @@ row's RPS is inflated by failures — ignore it and check the build/limits.
   Linux scheduler. WSL2 also runs ~10–30% below native Linux.
 - **`others` at high c** on Linux can also come from `ulimit -n` or `somaxconn` — raise both
   (§1c) before blaming the server. The script's caps auto-scale, but the OS limits don't.
+- **⚠️ `TCP_NODELAY` is required on Linux for CrossSocket & Indy.** Without it, on Linux
+  loopback the keep-alive request→response ping-pong hits Nagle + the ~40 ms delayed-ACK
+  timer → a **flat ~44 ms/request floor (~2 270 RPS)** that's identical across CrossSocket and
+  Indy and has nothing to do with the server. mORMot sets `TCP_NODELAY` by default (and runs
+  ~9× its Windows throughput, ~90k RPS). **All four paths now set it** — bench **raw-Indy** /
+  **raw-CrossSocket**, plus the **Horse+Indy** providers (Console/Daemon/VCL bridge
+  `OnConnect → Binding.UseNagle:=False`) and the **Horse+CrossSocket** provider
+  (`Horse.Provider.CrossSocket.Server.pas` `OnConnected → TSocketAPI.SetTcpNoDelay`, shared by all
+  CrossSocket shapes). After rebuilding, no row should sit at the ~44 ms / ~2 270 RPS Nagle floor;
+  if one does, the binary predates the fix. (See `bench-analysis-report.md` §7.5.)
+  - **Does the NODELAY change affect more than the `/ping` bench?** Yes — it's a per-connection
+    option applied to *every* request, but the effect is positive (small responses: removes the
+    ~40 ms stall) or neutral (large bodies / uploads: content is byte-for-byte identical, only the
+    final flush is immediate), never harmful. It matches what nginx/Apache/Go/mORMot all do by
+    default. Full rationale + per-shape table in `bench-analysis-report.md` §7.5.2 (and the
+    confirmed before/after Linux numbers in §7.5.1).
 
 ---
 
