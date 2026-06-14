@@ -77,7 +77,6 @@ LeftCol=1
 Elisions=
 Bookmarks=
 EditViewName=C:\lang\Repo\horse-provider-crosssocket\samples\bench\Servers\Mormot\HorseBenchMormot_diag.dpr
-
 [ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlLXByb3ZpZGVyLWNyb3Nzc29ja2V0XHNhbXBsZXNcYmVuY2hcU2Vy
 dmVyc1xSYXdDcm9zc1NvY2tldFxIb3JzZUJlbmNoUmF3Q3Jvc3NTb2NrZXQuZHBy]
 Module=C:\lang\Repo\horse-provider-crosssocket\samples\bench\Servers\RawCrossSocket\HorseBenchRawCrossSocket.dpr
@@ -88,4 +87,15 @@ LeftCol=1
 Elisions=
 Bookmarks=
 EditViewName=C:\lang\Repo\horse-provider-crosssocket\samples\bench\Servers\RawCrossSocket\HorseBenchRawCrossSocket.dpr
+
+[ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlLXByb3ZpZGVyLWNyb3Nzc29ja2V0XHNhbXBsZXNcYmVuY2hcU2Vy
+dmVyc1xSYXdJbmR5XEhvcnNlQmVuY2hSYXdJbmR5LmRwcg==]
+Module=C:\lang\Repo\horse-provider-crosssocket\samples\bench\Servers\RawIndy\HorseBenchRawIndy.dpr
+CursorX=33
+CursorY=82
+TopLine=61
+LeftCol=1
+Elisions=
+Bookmarks=
+EditViewName=C:\lang\Repo\horse-provider-crosssocket\samples\bench\Servers\RawIndy\HorseBenchRawIndy.dpr
 

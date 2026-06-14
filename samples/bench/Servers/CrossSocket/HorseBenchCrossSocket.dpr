@@ -31,7 +31,7 @@
 uses
   {$IFDEF MSWINDOWS}
   Winapi.Windows,
-  {$ENDIF}
+  {$ENDIF }
   System.SysUtils,
   System.StrUtils,
   Horse,
@@ -40,7 +40,8 @@ uses
   Horse.Middleware.RequestGuard,
   Horse.Middleware.SecurityHeaders,
   Horse.CORS,
-  Horse.BenchRoutes in '..\..\Common\Horse.BenchRoutes.pas';
+  Horse.BenchRoutes in '..\..\Common\Horse.BenchRoutes.pas',
+  Horse.Provider.CrossSocket.Response in '..\..\..\..\src\Horse.Provider.CrossSocket.Response.pas';
 
 const
   BASE_PORT = BENCH_PORT_CROSSSOCKET_BARE;

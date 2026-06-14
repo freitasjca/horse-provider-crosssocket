@@ -20,7 +20,18 @@
 
   Port: 9005 (single mode — no middleware variant for raw servers).
 
+  Optional flags:
+    --headers   Stamp the 5 SecurityHeaders natively (no Horse).
+    --async     Host THttpAsyncServer (non-blocking event loop) instead of the
+                default THttpServer thread pool. Pure transport-level A/B — this
+                is the no-Horse baseline for the Horse+mORMot --async comparison.
+    --httpapi   Host the Windows http.sys server (THttpApiServer). WINDOWS ONLY
+                (raises elsewhere). No-Horse baseline for Horse+mORMot --httpapi.
+                Needs admin rights or: netsh http add urlacl url=http://+:9005/ user=<acct>.
+                If both --httpapi and --async are given, --httpapi wins.
+
   Required search path entries (Project → Options → Library path):
+    <mormot2-repo>\src\net\mormot.net.async.pas  (THttpAsyncServer, for --async)
     <mormot2-repo>\src\...          (full mORMot2 source tree)
     ... (same paths used by HorseBenchMormot.dproj)
 }
@@ -33,10 +44,12 @@ uses
   {$ENDIF}
   System.SysUtils,
   System.Classes,         // TThread.Sleep (cross-platform)
+  System.StrUtils,        // IfThen (server-kind label)
   mormot.core.base,       // RawUtf8, RawByteString
   mormot.core.unicode,    // StringToUtf8, Utf8ToString
   mormot.net.http,        // THttpServerRequestAbstract, HTTP status codes
-  mormot.net.server;      // THttpServer
+  mormot.net.server,      // THttpServer + THttpServerSocketGeneric (shared base)
+  mormot.net.async;       // THttpAsyncServer (--async)
 
 const
   BENCH_PORT_RAW_MORMOT = 9005;
@@ -47,6 +60,8 @@ var
   // TRawMormotHandler.Process (below) can read it. Decisive test: if this sheds
   // ~60% under bombardier keep-alive c=100, the defect is in the mORMot transport.
   GAddHeaders: Boolean = False;
+  GAsync:      Boolean = False;   // --async:   THttpAsyncServer instead of THttpServer
+  GHttpApi:    Boolean = False;   // --httpapi: Windows http.sys THttpApiServer (Win only)
   GModeLabel:  string  = 'bare';
 
 // ── Request handler ───────────────────────────────────────────────────────────
@@ -111,7 +126,7 @@ end;
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 var
-  GServer:   THttpServer;
+  GServer:   THttpServerGeneric;   // THttpServer / THttpAsyncServer (--async) / THttpApiServer (--httpapi)
   GHandler:  TRawMormotHandler;
   GShutdown: Boolean = False;
 
@@ -145,6 +160,8 @@ end;
 
 begin
   GAddHeaders := HasSwitch('headers');
+  GAsync      := HasSwitch('async');
+  GHttpApi    := HasSwitch('httpapi');
   if GAddHeaders then
     GModeLabel := '+headers (native)';
   {$IFDEF MSWINDOWS}
@@ -152,19 +169,51 @@ begin
   {$ENDIF}
 
   GHandler := TRawMormotHandler.Create;
-  GServer  := THttpServer.Create(
-    StringToUtf8(IntToStr(BENCH_PORT_RAW_MORMOT)),
-    nil,    // OnStart
-    nil,    // OnStop
-    '',     // ProcessName
-    32      // ThreadPool size — same default as Horse mORMot provider
-  );
+  // Raw transport-level A/B (no Horse in the path). THttpServer / THttpAsyncServer
+  // share the THttpServerSocketGeneric.Create signature; THttpApiServer (http.sys)
+  // descends from THttpServerGeneric, has a different constructor + AddUrl, and is
+  // Windows-only — so it sits in its own {$IFDEF MSWINDOWS} branch. GServer is the
+  // common THttpServerGeneric base; WaitStarted is called per-family below.
+  if GHttpApi then
+  begin
+    {$IFDEF MSWINDOWS}
+    var LApi := THttpApiServer.Create(
+      '', nil, nil, '', [], nil, 32);
+    if LApi.AddUrl('', StringToUtf8(IntToStr(BENCH_PORT_RAW_MORMOT)), False, '+', True) <> 0 then
+    begin
+      LApi.Free;
+      raise Exception.CreateFmt(
+        'http.sys AddUrl failed for http://+:%d/ — run as Administrator, or ' +
+        'pre-authorize: netsh http add urlacl url=http://+:%d/ user=<account>',
+        [BENCH_PORT_RAW_MORMOT, BENCH_PORT_RAW_MORMOT]);
+    end;
+    GServer := LApi;
+    {$ELSE}
+    raise Exception.Create('--httpapi (http.sys) is Windows-only');
+    {$ENDIF}
+  end
+  else if GAsync then
+    GServer := THttpAsyncServer.Create(
+      StringToUtf8(IntToStr(BENCH_PORT_RAW_MORMOT)), nil, nil, '', 32)
+  else
+    GServer := THttpServer.Create(
+      StringToUtf8(IntToStr(BENCH_PORT_RAW_MORMOT)), nil, nil, '', 32);
   try
     GServer.OnRequest := GHandler.Process;
-    GServer.WaitStarted(10);   // wait up to 10 s for port to bind
 
-    WriteLn(Format('[HorseBench/RawMormot] Listening on http://127.0.0.1:%d  [%s]',
-      [BENCH_PORT_RAW_MORMOT, GModeLabel]));
+    // WaitStarted is not on THttpServerGeneric and its signature differs per
+    // family — call it on the concrete type.
+    {$IFDEF MSWINDOWS}
+    if GHttpApi then
+      THttpApiServer(GServer).WaitStarted(10)
+    else
+    {$ENDIF}
+      THttpServerSocketGeneric(GServer).WaitStarted(10);
+
+    WriteLn(Format('[HorseBench/RawMormot] Listening on http://127.0.0.1:%d  [%s]  server=%s',
+      [BENCH_PORT_RAW_MORMOT, GModeLabel,
+       IfThen(GHttpApi, 'THttpApiServer (http.sys)',
+         IfThen(GAsync, 'THttpAsyncServer', 'THttpServer'))]));
     WriteLn('Press Ctrl-C to stop.');
 
     while not GShutdown do
