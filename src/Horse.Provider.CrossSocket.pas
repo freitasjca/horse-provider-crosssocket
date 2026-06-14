@@ -1,5 +1,7 @@
 ﻿unit Horse.Provider.CrossSocket;
 
+{$IF DEFINED(FPC)}{$MODE DELPHI}{$H+}{$ENDIF}
+
 {
   Horse CrossSocket Provider  (hardened)
   =======================================
@@ -108,9 +110,15 @@
 interface
 
 uses
+{$IF DEFINED(FPC)}
+  SysUtils,
+  Classes,
+  SyncObjs,
+{$ELSE}
   System.SysUtils,
   System.Classes,
   System.SyncObjs,
+{$ENDIF}
   //Horse,
   Horse.Exception,
   Horse.Provider.Abstract,

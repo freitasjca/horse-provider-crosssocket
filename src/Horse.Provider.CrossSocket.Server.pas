@@ -1,5 +1,7 @@
 ﻿unit Horse.Provider.CrossSocket.Server;
 
+{$IF DEFINED(FPC)}{$MODE DELPHI}{$H+}{$ENDIF}
+
 {
   Horse CrossSocket Provider  -  Server Wrapper
   -----------------------------------------------
@@ -80,9 +82,15 @@
 interface
 
 uses
+{$IF DEFINED(FPC)}
+  SysUtils,
+  Classes,
+  SyncObjs,
+{$ELSE}
   System.SysUtils,
   System.Classes,
   System.SyncObjs,
+{$ENDIF}
   Net.SocketAPI,          // TSocketAPI.SetTcpNoDelay (TCP_NODELAY on accept)
   Net.CrossSocket.Base,   // ICrossConnection (OnConnected handler)
   Net.CrossHttpServer,

@@ -1,5 +1,7 @@
 ﻿unit Horse.Provider.CrossSocket.WorkerPool;
 
+{$IF DEFINED(FPC)}{$MODE DELPHI}{$H+}{$ENDIF}
+
 {
   Horse CrossSocket Provider  -  Worker Thread Pool  (hardened)
   --------------------------------------------------------------
@@ -34,10 +36,17 @@
 interface
 
 uses
+{$IF DEFINED(FPC)}
+  SysUtils,
+  Classes,
+  SyncObjs,
+  Generics.Collections;
+{$ELSE}
   System.SysUtils,
   System.Classes,
   System.SyncObjs,
   System.Generics.Collections;
+{$ENDIF}
 
 const
   WORKER_POOL_MIN_THREADS  = 4;

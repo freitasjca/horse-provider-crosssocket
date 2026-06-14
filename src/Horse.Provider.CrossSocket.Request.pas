@@ -1,5 +1,7 @@
 ﻿unit Horse.Provider.CrossSocket.Request;
 
+{$IF DEFINED(FPC)}{$MODE DELPHI}{$H+}{$ENDIF}
+
 {
   Horse CrossSocket Provider  -  Request Bridge  (hardened)
   ----------------------------------------------------------
