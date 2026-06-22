@@ -1,0 +1,1 @@
+start cmd /k "chcp 936 & HorseCSParamTestClient.exe"

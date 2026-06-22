@@ -227,7 +227,6 @@ LeftCol=1
 Elisions=
 Bookmarks=
 EditViewName=C:\lang\Repo\horse-provider-mormot\src\Horse.Provider.Mormot.pas
-
 [ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlLXByb3ZpZGVyLW1vcm1vdFxzcmNcSG9yc2UuUHJvdmlkZXIuTW9y
 bW90LnBhcw==]
 Module=C:\lang\Repo\horse-provider-mormot\src\Horse.Provider.Mormot.pas
@@ -238,4 +237,15 @@ LeftCol=1
 Elisions=
 Bookmarks=
 EditViewName=C:\lang\Repo\horse-provider-mormot\src\Horse.Provider.Mormot.pas
+
+[ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlLXByb3ZpZGVyLW1vcm1vdFx0ZXN0c1xIb3JzZU1vcm1vdFBhcmFt
+VGVzdENsaWVudC5kcHI=]
+Module=C:\lang\Repo\horse-provider-mormot\tests\HorseMormotParamTestClient.dpr
+CursorX=14
+CursorY=571
+TopLine=550
+LeftCol=1
+Elisions=
+Bookmarks=
+EditViewName=C:\lang\Repo\horse-provider-mormot\tests\HorseMormotParamTestClient.dpr
 

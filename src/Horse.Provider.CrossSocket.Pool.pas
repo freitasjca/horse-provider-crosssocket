@@ -313,7 +313,11 @@ end;
 class function THorseContextPool.IdleCount: Integer;
 begin
   // [SEC-10] Atomic read — safe from any thread without the lock
+  {$IF DEFINED(FPC)}
+  Result := InterlockedCompareExchange(FIdleCount, 0, 0);
+  {$ELSE}
   Result := TInterlocked.CompareExchange(FIdleCount, 0, 0);
+  {$ENDIF}
 end;
 
 end.

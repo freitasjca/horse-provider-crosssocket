@@ -585,8 +585,12 @@ begin
   AHorseReq.Populate(LMethod, LMethodType, LPath, LContentType, LRemoteAddr);
 
   // ── Body ──────────────────────────────────────────────────────────────
+  // PATCH-REQ-11: the 2-arg Body(X) defaults to AOwnsBody=True, which makes
+  // THorseRequest.Clear FreeAndNil the object on pool recycle. Your transport
+  // OWNS the body stream, so pass AOwnsBody=False — otherwise Clear double-frees
+  // it (the same trap that crashed every POST before the flag existed).
   if Assigned(AStream.Body) then
-    AHorseReq.Body(AStream.Body);   // non-owning reference — never freed
+    AHorseReq.Body(AStream.Body, {AOwnsBody=}False);   // non-owning reference — never freed
 
   // ── Headers → THorseRequest.Headers dictionary ────────────────────────
   // Iterate your transport's headers and add them:
@@ -1044,7 +1048,7 @@ Copy this pattern exactly in your `IHorseRawRequest` implementation. The adapter
 
 ## Critical rules
 
-1. **`FBody` is non-owning.** Your transport owns the body stream. `THorseRequest.Clear` sets `FBody := nil` without calling `Free`. Never call `FRequest.Body(nil)` — the setter frees the existing `FBody`. See FIX-POOL-1 in `CLAUDE.md`.
+1. **`FBody` is non-owning — register it with `Body(stream, False)`.** Your transport owns the body stream. Since PATCH-REQ-11, `Body(AObject)` carries an `AOwnsBody` flag that defaults to **`True`** (so `Clear`/`Destroy` `FreeAndNil` the object — correct for middleware-parsed objects like Jhonson). For a transport-owned body you MUST pass `Body(AStream.Body, False)`; with the default `True`, `THorseRequest.Clear` would free a stream your transport also frees → double-free. When marked non-owning, `Clear` sets `FBody := nil` without calling `Free`. Also never call `FRequest.Body(nil)` — the setter frees the existing owned `FBody` first. See PATCH-REQ-11 and FIX-POOL-1 in `CLAUDE.md`.
 
 2. **`EHorseCallbackInterrupted` must be caught.** This is Horse's normal pipeline-end signal — raised by `NextCaller` when the middleware chain is exhausted. If you let it fall into the generic `Exception` handler, every request logs as an error and gets a 500 response overlaid on the real response.
 

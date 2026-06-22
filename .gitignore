@@ -93,3 +93,5 @@ __recovery/
 *.~dsk
 *.identifier
 samples/bench/results/
+*.log
+tests/temp/

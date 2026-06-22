@@ -340,13 +340,21 @@ end;
 
 procedure THorseCrossSocketServer.IncrementActive;
 begin
+  {$IF DEFINED(FPC)}
+  if InterlockedIncrement(FActiveConns) = 1 then
+  {$ELSE}
   if TInterlocked.Increment(FActiveConns) = 1 then
+  {$ENDIF}
     FDrainEvent.ResetEvent;  // first active request — block drain wait
 end;
 
 procedure THorseCrossSocketServer.DecrementActive;
 begin
+  {$IF DEFINED(FPC)}
+  if InterlockedDecrement(FActiveConns) = 0 then
+  {$ELSE}
   if TInterlocked.Decrement(FActiveConns) = 0 then
+  {$ENDIF}
     FDrainEvent.SetEvent;    // all requests done — unblock Stop
 end;
 

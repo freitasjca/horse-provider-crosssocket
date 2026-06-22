@@ -137,6 +137,12 @@ type
     class procedure ApplySecurityHeaders(
                       const ACrossRes:       ICrossHttpResponse;
                       const AServerBanner:   string);
+    class function TryReadBodyStream(
+                            AStream: TStream;
+                        out ABody: RawByteString;
+                      const AEmptyIsBody: Boolean): Boolean;
+    class procedure ReleaseRawResponseContentStream(
+                            ARaw: {$IF DEFINED(FPC)}TResponse{$ELSE}TWebResponse{$ENDIF});
     class procedure WriteBody(
                             AHorseRes:       THorseResponse;
                       const ACrossRes:       ICrossHttpResponse);
@@ -298,6 +304,75 @@ begin
     ACrossRes.Header['Server'] := 'unknown';
 end;
 
+// ── [COMPAT-1] Synchronous stream → RawByteString reader ─────────────────────
+// Reads the whole stream into ABody.  Returns True when there is a body to send.
+// AEmptyIsBody decides how an assigned-but-empty stream is reported: True means
+// "an empty body counts as a body" (caller will send an empty body and stop),
+// False means "keep looking for another body source".
+// CrossSocket's ICrossHttpResponse.Send(TStream) is asynchronous — it reads the
+// stream AFTER WriteBody returns — so any stream the bridge intends to free must
+// first be drained synchronously here, never handed to Send directly.
+class function TResponseBridge.TryReadBodyStream(AStream: TStream; out
+  ABody: RawByteString; const AEmptyIsBody: Boolean): Boolean;
+var
+  LSize: Int64;
+  LRead: Integer;
+begin
+  Result := False;
+  ABody := '';
+
+  if not Assigned(AStream) then
+    Exit;
+
+  LSize := AStream.Size;
+
+  if LSize <= 0 then
+  begin
+    Result := AEmptyIsBody;
+    Exit;
+  end;
+
+  if LSize > High(Integer) then
+    raise Exception.CreateFmt('Response body stream too large: %d bytes', [LSize]);
+
+  AStream.Position := 0;
+
+  SetLength(ABody, Integer(LSize));
+  LRead := AStream.Read(ABody[1], Integer(LSize));
+
+  if LRead <> Integer(LSize) then
+    SetLength(ABody, LRead);
+
+  Result := True;
+end;
+
+// ── [COMPAT-1] Free a RawWebResponse-owned ContentStream after it is consumed ─
+// Middleware (e.g. horse-jhonson) may set RawWebResponse.ContentStream with
+// FreeContentStream := True, transferring ownership to the response.  Once the
+// bridge has copied the bytes out via TryReadBodyStream it must free that stream,
+// otherwise it leaks once per request.  When FreeContentStream is False the
+// stream is non-owning and is left untouched.
+class procedure TResponseBridge.ReleaseRawResponseContentStream(
+  ARaw: {$IF DEFINED(FPC)}TResponse{$ELSE}TWebResponse{$ENDIF});
+var
+  LStream: TStream;
+begin
+  LStream := nil;
+  if not Assigned(ARaw) then
+    Exit;
+
+  LStream := ARaw.ContentStream;
+  if not Assigned(LStream) then
+    Exit;
+
+  if ARaw.FreeContentStream then
+  begin
+    ARaw.FreeContentStream := False;
+    ARaw.ContentStream := nil;
+    LStream.Free;
+  end;
+end;
+
 // ── [SEC-24][IMP-6] ──────────────────────────────────────────────────────────
 class procedure TResponseBridge.WriteBody(
         AHorseRes:       THorseResponse;
@@ -308,6 +383,7 @@ var
   Stream:   TStream;
   LRawRes:  {$IF DEFINED(FPC)}TResponse{$ELSE}TWebResponse{$ENDIF};
   LContent: string;
+  LRawBody: RawByteString;
 begin
   // ContentStream: PATCH-RES-4 shadow field (nil when not set)
   Stream := AHorseRes.ContentStream;
@@ -339,6 +415,23 @@ begin
   LRawRes := AHorseRes.RawWebResponse;
   if Assigned(LRawRes) then
   begin
+    // [COMPAT-1] Body written via RawWebResponse.ContentStream (e.g. middleware
+    // that streams a file or pre-rendered buffer).  CrossSocket's Send(TStream)
+    // is async — it reads the stream AFTER WriteBody returns — so we must NOT
+    // hand it a stream we are about to free.  Drain the bytes synchronously,
+    // free the owned stream, then send the captured buffer.
+    Stream := LRawRes.ContentStream;
+    if TryReadBodyStream(Stream, LRawBody, False) then
+    begin
+      ReleaseRawResponseContentStream(LRawRes);
+      SetLength(Buf, Length(LRawBody));
+      if Length(LRawBody) > 0 then
+        Move(LRawBody[1], Buf[0], Length(LRawBody));
+      ACrossRes.Header['Content-Length'] := IntToStr(Length(Buf));
+      ACrossRes.Send(Buf);
+      Exit;
+    end;
+
     LContent := LRawRes.Content;
     if LContent <> '' then
     begin
@@ -347,6 +440,11 @@ begin
       ACrossRes.Send(LContent);
       Exit;
     end;
+
+    // Assigned-but-empty stream with no string content: release the owned
+    // stream so it is not leaked, then fall through to the empty-body handling.
+    if TryReadBodyStream(Stream, LRawBody, True) then
+      ReleaseRawResponseContentStream(LRawRes);
   end;
 
   // [FIX-EMPTY-STATUS] For status >= 400 with no body, CrossSocket's _Send

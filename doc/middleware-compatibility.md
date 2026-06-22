@@ -59,6 +59,8 @@ The response-write side of `TInterfacedWebResponse` (`SetContent`, `SetStatusCod
 
 The COMPAT-1 code in `WriteBody` and `Flush` checks `LRawRes.Content` / `LRawRes.ContentType` after the shadow fields are exhausted, as a forward hook for if those stubs are ever made to forward. Today they always return `''`, so COMPAT-1 for these two properties is dead. COMPAT-1 does NOT provide working compatibility for middleware that writes via `RawWebResponse.Content` or `.ContentType`.
 
+`WriteBody` carries a third forward hook for `RawWebResponse.ContentStream`: it drains the stream synchronously via `TResponseBridge.TryReadBodyStream` and, when the raw response owns it (`FreeContentStream = True`), releases it via `ReleaseRawResponseContentStream` before sending the captured bytes. The synchronous read is deliberate — `ICrossHttpResponse.Send(TStream)` is async, so handing it a stream the bridge then frees would be a use-after-free. Like the other two, this hook is dormant today because `SetContentStream` is a stub (the stream can never be set through the adapter), but it is leak-safe the day the stub is made to forward — and it mirrors the mORMot bridge, which uses the same two helpers for a reachable `ContentStream` path.
+
 ---
 
 ## What about `RawWebResponse.SendResponse`?
