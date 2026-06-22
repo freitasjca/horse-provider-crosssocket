@@ -482,9 +482,11 @@ begin
   // ACrossReq.Body: TObject — confirmed property type on ICrossHttpRequest.
   // When BodyType = btBinary the concrete object is a TMemoryStream.
   //
-  // [SEC-9] Non-owning reference: CrossSocket owns this stream for the
-  // lifetime of the request.  Never free it.  Pool Reset calls Body(nil)
-  // which clears FBody without freeing the referent.
+  // [SEC-9] Non-owning reference: CrossSocket owns all body objects for the
+  // lifetime of the request.  Body(..., False) marks them non-owning so
+  // THorseRequest.Clear sets FBody := nil without freeing the referent.
+  // If middleware (e.g. Jhonson) later calls Body(ParsedObj) [default
+  // AOwnsBody=True], Clear will correctly free that owned object on recycle.
   BodyObj := ACrossReq.Body;
   if BodyObj = nil then Exit;
 
@@ -495,7 +497,7 @@ begin
         if Stream.Size > 0 then
         begin
           Stream.Position := 0;
-          AHorseReq.Body(Stream);
+          AHorseReq.Body(Stream, {AOwnsBody=}False);
           // [PATCH-REQ-9] Decode body to string once here so that
           // THorseRequest.Body: string is O(1) for all callers.
           // FBody holds the non-owning stream reference for Body<TStream>
@@ -511,8 +513,8 @@ begin
 
     btUrlEncoded,
     btMultiPart:
-      // For parsed bodies, just pass the object – middleware can inspect it
-      AHorseReq.Body(BodyObj);
+      // CrossSocket owns the parsed body object — mark non-owning.
+      AHorseReq.Body(BodyObj, {AOwnsBody=}False);
 
     else
       ; // do nothing
@@ -548,8 +550,15 @@ begin
             // ordinary form field
             AHorseReq.ContentFields.Dictionary.AddOrSetValue(Field.Name, Field.AsString)
           else
-            // file upload – store the stream (non-owning reference)
-            AHorseReq.ContentFields.AddStream(Field.Name, Field.Value);
+            // File upload — store the stream NON-OWNING (PATCH-PARAM-1).
+            // Field.Value belongs to THttpMultiPartFormData, which is owned by
+            // the ICrossHttpRequest and freed when the request completes.  Horse
+            // must NOT take ownership: AOwnsStream=True here would make
+            // THorseCoreParam.Clear free a stream CrossSocket also frees →
+            // double-free.  Unlike mORMot (which synthesises a TMemoryStream
+            // with no other owner and passes True), CrossSocket already owns the
+            // stream, so it never leaked — the explicit False documents that.
+            AHorseReq.ContentFields.AddStream(Field.Name, Field.Value, {AOwnsStream=}False);
         end;
       end;
 

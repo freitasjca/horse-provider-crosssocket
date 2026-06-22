@@ -275,13 +275,21 @@ end;
 
 procedure THorseWorkerPool.TaskStarted;
 begin
+  {$IF DEFINED(FPC)}
+  if InterlockedIncrement(FRunningTasks) = 1 then
+  {$ELSE}
   if TInterlocked.Increment(FRunningTasks) = 1 then
+  {$ENDIF}
     FDrainEvent.ResetEvent;
 end;
 
 procedure THorseWorkerPool.TaskFinished;
 begin
+  {$IF DEFINED(FPC)}
+  if InterlockedDecrement(FRunningTasks) = 0 then
+  {$ELSE}
   if TInterlocked.Decrement(FRunningTasks) = 0 then
+  {$ENDIF}
     FDrainEvent.SetEvent;
 end;
 

@@ -36,6 +36,18 @@
         <Projects Include="..\horse-provider-mormot\samples\tests\Delphi\WinService\HorseMormotServiceTestServer.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="..\horse-provider-mormot\tests\HorseMormotParamTestClient.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="..\horse-provider-mormot\tests\HorseMormotParamTestServer.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="tests\HorseCSParamTestClient.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="tests\HorseCSParamTestServer.dproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -143,14 +155,50 @@
     <Target Name="HorseMormotServiceTestServer:Make">
         <MSBuild Projects="..\horse-provider-mormot\samples\tests\Delphi\WinService\HorseMormotServiceTestServer.dproj" Targets="Make"/>
     </Target>
+    <Target Name="HorseMormotParamTestClient">
+        <MSBuild Projects="..\horse-provider-mormot\tests\HorseMormotParamTestClient.dproj"/>
+    </Target>
+    <Target Name="HorseMormotParamTestClient:Clean">
+        <MSBuild Projects="..\horse-provider-mormot\tests\HorseMormotParamTestClient.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseMormotParamTestClient:Make">
+        <MSBuild Projects="..\horse-provider-mormot\tests\HorseMormotParamTestClient.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseMormotParamTestServer">
+        <MSBuild Projects="..\horse-provider-mormot\tests\HorseMormotParamTestServer.dproj"/>
+    </Target>
+    <Target Name="HorseMormotParamTestServer:Clean">
+        <MSBuild Projects="..\horse-provider-mormot\tests\HorseMormotParamTestServer.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseMormotParamTestServer:Make">
+        <MSBuild Projects="..\horse-provider-mormot\tests\HorseMormotParamTestServer.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseCSParamTestClient">
+        <MSBuild Projects="tests\HorseCSParamTestClient.dproj"/>
+    </Target>
+    <Target Name="HorseCSParamTestClient:Clean">
+        <MSBuild Projects="tests\HorseCSParamTestClient.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseCSParamTestClient:Make">
+        <MSBuild Projects="tests\HorseCSParamTestClient.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseCSParamTestServer">
+        <MSBuild Projects="tests\HorseCSParamTestServer.dproj"/>
+    </Target>
+    <Target Name="HorseCSParamTestServer:Clean">
+        <MSBuild Projects="tests\HorseCSParamTestServer.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseCSParamTestServer:Make">
+        <MSBuild Projects="tests\HorseCSParamTestServer.dproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="Console;HorseProviderCrossSocket;HorseCSTestClient;HorseCSTestServer;HorseCSConsoleTestServer;HorseCSLinuxDaemonTestServer;HorseCSServiceTestServer;HorseMormotConsoleTestServer;HorseMormotLinuxDaemonTestServer;HorseMormotVCLTestServer;HorseMormotServiceTestServer"/>
+        <CallTarget Targets="Console;HorseProviderCrossSocket;HorseCSTestClient;HorseCSTestServer;HorseCSConsoleTestServer;HorseCSLinuxDaemonTestServer;HorseCSServiceTestServer;HorseMormotConsoleTestServer;HorseMormotLinuxDaemonTestServer;HorseMormotVCLTestServer;HorseMormotServiceTestServer;HorseMormotParamTestClient;HorseMormotParamTestServer;HorseCSParamTestClient;HorseCSParamTestServer"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="Console:Clean;HorseProviderCrossSocket:Clean;HorseCSTestClient:Clean;HorseCSTestServer:Clean;HorseCSConsoleTestServer:Clean;HorseCSLinuxDaemonTestServer:Clean;HorseCSServiceTestServer:Clean;HorseMormotConsoleTestServer:Clean;HorseMormotLinuxDaemonTestServer:Clean;HorseMormotVCLTestServer:Clean;HorseMormotServiceTestServer:Clean"/>
+        <CallTarget Targets="Console:Clean;HorseProviderCrossSocket:Clean;HorseCSTestClient:Clean;HorseCSTestServer:Clean;HorseCSConsoleTestServer:Clean;HorseCSLinuxDaemonTestServer:Clean;HorseCSServiceTestServer:Clean;HorseMormotConsoleTestServer:Clean;HorseMormotLinuxDaemonTestServer:Clean;HorseMormotVCLTestServer:Clean;HorseMormotServiceTestServer:Clean;HorseMormotParamTestClient:Clean;HorseMormotParamTestServer:Clean;HorseCSParamTestClient:Clean;HorseCSParamTestServer:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="Console:Make;HorseProviderCrossSocket:Make;HorseCSTestClient:Make;HorseCSTestServer:Make;HorseCSConsoleTestServer:Make;HorseCSLinuxDaemonTestServer:Make;HorseCSServiceTestServer:Make;HorseMormotConsoleTestServer:Make;HorseMormotLinuxDaemonTestServer:Make;HorseMormotVCLTestServer:Make;HorseMormotServiceTestServer:Make"/>
+        <CallTarget Targets="Console:Make;HorseProviderCrossSocket:Make;HorseCSTestClient:Make;HorseCSTestServer:Make;HorseCSConsoleTestServer:Make;HorseCSLinuxDaemonTestServer:Make;HorseCSServiceTestServer:Make;HorseMormotConsoleTestServer:Make;HorseMormotLinuxDaemonTestServer:Make;HorseMormotVCLTestServer:Make;HorseMormotServiceTestServer:Make;HorseMormotParamTestClient:Make;HorseMormotParamTestServer:Make;HorseCSParamTestClient:Make;HorseCSParamTestServer:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

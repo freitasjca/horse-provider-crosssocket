@@ -59,8 +59,13 @@ type
     (IHorseRawRequest implementation + generic adapter). }
 
   TCrossSocketWebRequest = class(TInterfacedWebRequest)
+  private
+{$IF DEFINED(FPC)}
+    procedure PopulateMultipartFiles(const ACrossReq: ICrossHttpRequest);
+{$ENDIF}
   public
     constructor Create(const ACrossReq: ICrossHttpRequest); reintroduce;
+    destructor Destroy; override;
   end;
 
 implementation
@@ -68,6 +73,85 @@ implementation
 constructor TCrossSocketWebRequest.Create(const ACrossReq: ICrossHttpRequest);
 begin
   inherited Create(TCrossSocketRawRequest.Create(ACrossReq));
+{$IF DEFINED(FPC)}
+  PopulateMultipartFiles(ACrossReq);
+{$ENDIF}
 end;
+
+destructor TCrossSocketWebRequest.Destroy;
+begin
+{$IF DEFINED(FPC)}
+  DeleteTempUploadedFiles;
+{$ENDIF}
+  inherited Destroy;
+end;
+
+{$IF DEFINED(FPC)}
+{-----------------------------------------------------------------------------
+ Popula RawWebRequest.Files quando o provider CrossSocket recebe
+ multipart/form-data.  Espelho de TMormotWebRequest.PopulateMultipartFiles,
+ porém iterando a estrutura já parseada pelo CrossSocket
+ (THttpMultiPartFormData) em vez de decodificar o corpo manualmente.
+ Os arquivos enviados são gravados em arquivos temporários gerenciados pela
+ base TRequest (FPC) e removidos por DeleteTempUploadedFiles no Destroy.
+ -----------------------------------------------------------------------------}
+procedure TCrossSocketWebRequest.PopulateMultipartFiles(
+  const ACrossReq: ICrossHttpRequest);
+var
+  LMultiPart: THttpMultiPartFormData;
+  LField: TFormField;
+  LName: String = '';
+  LFileName: String = '';
+  LTempFileName: String = '';
+  LFile: TUploadedFile = nil;
+  LStream: TFileStream = nil;
+begin
+  if ACrossReq.BodyType <> btMultiPart then
+    Exit;
+
+  LMultiPart := ACrossReq.Body as THttpMultiPartFormData;
+  if LMultiPart = nil then
+    Exit;
+
+  for LField in LMultiPart do
+  begin
+    LName := LField.Name;
+    if LName = EmptyStr then
+      Continue;
+
+    if LField.FileName <> '' then
+    begin
+      LFileName := ExtractFileName(LField.FileName);
+
+      LFile := Files.Add as TUploadedFile;
+      LFile.FieldName := LName;
+      LFile.FileName := LFileName;
+      LFile.ContentType := LField.ContentType;
+      LFile.Disposition := 'form-data';
+      if LField.Value <> nil then
+        LFile.Size := LField.Value.Size
+      else
+        LFile.Size := 0;
+      LFile.LocalFileName := GetTempUploadFileName(LName, LFileName, LFile.Size);
+
+      LTempFileName := LFile.LocalFileName;
+      LStream := TFileStream.Create(LTempFileName, fmCreate);
+      try
+        if (LField.Value <> nil) and (LField.Value.Size > 0) then
+        begin
+          LField.Value.Position := 0;
+          LStream.CopyFrom(LField.Value, LField.Value.Size);
+        end;
+      finally
+        FreeAndNil(LStream);
+      end;
+    end
+    else
+    begin
+      ContentFields.Values[LName] := LField.AsString;
+    end;
+  end;
+end;
+{$ENDIF}
 
 end.

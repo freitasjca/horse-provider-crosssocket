@@ -957,7 +957,6 @@ begin
     R.Body = 'shadow-wins', R.Body);
   Check('RawWebResponse stub value NOT present in body',
     Pos('raw-should-not-appear', R.Body) = 0, R.Body);
-
 end;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
