@@ -115,7 +115,8 @@ uses
 {$ENDIF}
   Net.CrossHttpServer,
   Net.CrossHttpParams,
-  Horse.Response;
+  Horse.Response,
+  Horse.Core.Cookie;
 
 type
   TResponseBridge = class
@@ -250,6 +251,7 @@ var
   I:         Integer;
   LName:     string;
   LValue:    string;
+  LCookie:   THorseCookie;
 begin
   // 1. Copy headers from THorseResponse.CustomHeaders (PATCH-RES-1/3)
   //    Written by Res.AddHeader — the normal Horse API path.
@@ -284,6 +286,14 @@ begin
         EmitHeader(LName, LValue);
     end;
   end;
+
+  // 3. PATCH-COOKIE-1 — emit one Set-Cookie line per typed cookie (RFC 6265 §3).
+  //    Goes through the [MULTI-1] path (Header.Add(..., True)) so multiple cookies
+  //    are NOT folded into one header. ToHeaderValue is already validated/encoded
+  //    by THorseCookie; SanitiseHeaderValue keeps CRLF stripping as defence-in-depth.
+  if Assigned(AHorseRes.Cookies) then
+    for LCookie in AHorseRes.Cookies do
+      ACrossRes.Header.Add('Set-Cookie', SanitiseHeaderValue(LCookie.ToHeaderValue), True);
 end;
 
 // ── [SEC-22][SEC-23][SEC-5][Config] ──────────────────────────────────────────
@@ -385,17 +395,28 @@ var
   LContent: string;
   LRawBody: RawByteString;
 begin
-  // ContentStream: PATCH-RES-4 shadow field (nil when not set)
+  // ContentStream: PATCH-RES-4 shadow field (nil when not set).
+  //
+  // PATCH-SENDFILE-1: SendFile/Download now store a response-OWNED copy that
+  // THorseResponse.Clear frees on pool recycle — which runs right after Flush,
+  // while CrossSocket's Send(TStream) chunk reader would still be draining the
+  // stream asynchronously (use-after-free → the AV we reproduced).  So we must
+  // NOT hand the stream to the async sender: drain it to bytes synchronously and
+  // Send(TBytes), which holds the array for the lifetime of the send
+  // (Net.CrossHttpServer Send(TBytes) does LBody := ABody).  The owned stream is
+  // then safe for Clear to free immediately.
   Stream := AHorseRes.ContentStream;
   if Assigned(Stream) and (Stream.Size > 0) then
   begin
-    // [SEC-24] Reset position — guard against double-send of exhausted stream
-    Stream.Position := 0;
-    // [IMP-6] Set Content-Length so proxies and HEAD requests see the size
-    ACrossRes.Header['Content-Length'] := IntToStr(Stream.Size);
-    // ICrossHttpResponse.Send(TStream) — confirmed overload
-    ACrossRes.Send(Stream);
-    Exit;
+    if TryReadBodyStream(Stream, LRawBody, False) then
+    begin
+      SetLength(Buf, Length(LRawBody));
+      if Length(LRawBody) > 0 then
+        Move(LRawBody[1], Buf[0], Length(LRawBody));
+      ACrossRes.Header['Content-Length'] := IntToStr(Length(Buf));
+      ACrossRes.Send(Buf);
+      Exit;
+    end;
   end;
 
   // BodyText: PATCH-RES-4 shadow field (empty string when not set)
