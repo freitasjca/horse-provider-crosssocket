@@ -44,6 +44,7 @@ uses
   Horse.Commons,
   Horse.Core.Param,
   Horse.Core.Param.Field,
+  Horse.Core.Cookie,
   Horse.Provider.CrossSocket,
   Horse.Provider.CrossSocket.Pool;
 
@@ -54,6 +55,9 @@ const
   STREAM_SMALL_PAYLOAD =
     'stream-body-OK-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   STREAM_LARGE_LEN = 65536;
+
+  // Section J — wildcard catch-all + SendFile.  Must match the client.
+  WILDCARD_PAYLOAD = 'wildcard-sendfile-OK-0123456789-ABCDEF';
 
 var
   GStreamSmall: TStringStream = nil;
@@ -238,6 +242,32 @@ begin
        [JE(LField1), JE(LField2), LFileLen, JE(LFileContent)]));
 end;
 
+// Section J — wildcard catch-all + SendFile (verifies PATCH-SENDFILE-1).
+// Mirrors the user-reported pattern: open a stream, SendFile, free in finally.
+// SendFile copies the content at call time, so the FreeAndNil is harmless.
+procedure RouteWildcardFile(Req: THorseRequest; Res: THorseResponse);
+var
+  LStream: TStringStream;
+begin
+  try
+    LStream := TStringStream.Create(WILDCARD_PAYLOAD);
+    Res.SendFile(LStream, 'wildcard.bin', 'application/octet-stream').Status(200);
+  finally
+    try
+      FreeAndNil(LStream);
+    except on E: Exception do
+    end;
+  end;
+end;
+
+// Section K — RFC 6265 cookies (PATCH-COOKIE-1): two cookies + attributes.
+procedure RouteCookies(Req: THorseRequest; Res: THorseResponse);
+begin
+  Res.Cookie('sid', 'abc123').Path('/').HttpOnly(True).SameSite(ssLax);
+  Res.Cookie('theme', 'dark').MaxAge(3600);
+  Res.ContentType('text/plain').Send('cookies-set');
+end;
+
 // ── Registration ────────────────────────────────────────────────────────────────
 
 procedure RegisterRoutes;
@@ -267,6 +297,9 @@ begin
   THorse.Get('/stream/large', RouteStreamLarge);
 
   THorse.Post('/upload', RouteUpload);
+
+  THorse.Get('/cookies', RouteCookies);      // Section K
+  THorse.Get('/*',       RouteWildcardFile); // Section J (catch-all — register last)
 end;
 
 procedure FreeStreamFixtures;

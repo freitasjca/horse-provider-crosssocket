@@ -63,6 +63,18 @@ The COMPAT-1 code in `WriteBody` and `Flush` checks `LRawRes.Content` / `LRawRes
 
 ---
 
+## Cookies (`Res.Cookie` / `Res.AddCookie`)
+
+The typed RFC 6265 cookie API (PATCH-COOKIE-1, `Horse.Core.Cookie`) is **fully
+supported** on CrossSocket — unlike the stubbed `RawWebResponse.Content` path
+above. Cookies set via `Res.Cookie(name,value).Path(...).HttpOnly(...)` are kept
+in `THorseResponse.Cookies`; `TResponseBridge.CopyHeaders` iterates that list and
+emits **one `Set-Cookie` line per cookie** via the `[MULTI-1]` path
+(`ACrossRes.Header.Add('Set-Cookie', value, True)`), so multiple cookies are never
+folded into a single header. All attributes (`Path/Domain/Expires/Max-Age/Secure/
+HttpOnly/SameSite`) round-trip. The legacy `Res.AddHeader('Set-Cookie', …)` still
+works but holds only one cookie (it goes through the single-value header map).
+
 ## What about `RawWebResponse.SendResponse`?
 
 Some middleware calls `Res.RawWebResponse.SendResponse` to flush early (rare). On CrossSocket the call is a no-op stub — the response is flushed by `TResponseBridge.Flush` after the pipeline completes. Middleware that depends on early-flush semantics would need to call `ICrossHttpResponse.Send` directly, which means a per-provider branch. We have not encountered an official middleware that does this.

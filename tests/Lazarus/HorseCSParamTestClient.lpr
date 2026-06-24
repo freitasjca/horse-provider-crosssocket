@@ -94,6 +94,9 @@ const
     'stream-body-OK-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   STREAM_LARGE_LEN = 65536;
 
+  // Section J — wildcard catch-all + SendFile.  Must match the server.
+  WILDCARD_PAYLOAD = 'wildcard-sendfile-OK-0123456789-ABCDEF';
+
 // ── Global counters ────────────────────────────────────────────────────────────
 
 var
@@ -106,6 +109,7 @@ type
   TReqResult = record
     StatusCode: Integer;
     Body:       string;
+    Cookies:    string;   // all Set-Cookie header values, LF-joined (Section K)
     TimedOut:   Boolean;
   end;
 
@@ -238,11 +242,17 @@ begin
 
     AClient.DoRequest(AMethod, AUrl, nil, LBody, nil, nil,
       procedure(const AResp: ICrossHttpClientResponse)
+      var
+        NV: TNameValue;
       begin
         if AResp <> nil then
         begin
           LLocal.StatusCode := AResp.StatusCode;
           LLocal.Body       := StreamToStr(AResp.Content);
+          // Collect every Set-Cookie header value (THttpHeader keeps duplicates)
+          for NV in AResp.Header do
+            if SameText(NV.Name, 'Set-Cookie') then
+              LLocal.Cookies := LLocal.Cookies + NV.Value + #10;
         end;
         LEvent.SetEvent;
       end);
@@ -812,6 +822,35 @@ begin
   end
   else
     Check('I1  POST /upload', False, 'timeout');
+
+  // ════════════════════════════════════════════════════════════════════════════
+  Section('J  Wildcard catch-all + SendFile (PATCH-SENDFILE-1 — content owned)');
+  // ════════════════════════════════════════════════════════════════════════════
+  if DoSync(AClient, 'GET', BASE_URL + '/no/such/route', '', R) then
+    Check('J1  GET /no/such/route -> Get(''/*'') + SendFile delivers the file',
+      (R.StatusCode = 200) and (R.Body = WILDCARD_PAYLOAD),
+      Format('status=%d len=%d body="%s"',
+        [R.StatusCode, Length(R.Body), Copy(R.Body, 1, 48)]))
+  else
+    Check('J1  GET /no/such/route (wildcard SendFile)', False, 'timeout');
+
+  // ════════════════════════════════════════════════════════════════════════════
+  Section('K  RFC 6265 cookies — multiple Set-Cookie + attributes (PATCH-COOKIE-1)');
+  // ════════════════════════════════════════════════════════════════════════════
+  if DoSync(AClient, 'GET', BASE_URL + '/cookies', '', R) then
+  begin
+    Check('K1  GET /cookies -> 200 + both cookies present (two Set-Cookie lines)',
+      (R.StatusCode = 200) and (Pos('sid=abc123', R.Cookies) > 0) and
+      (Pos('theme=dark', R.Cookies) > 0),
+      Format('status=%d set-cookie=<%s>', [R.StatusCode, StringReplace(R.Cookies, #10, ' | ', [rfReplaceAll])]));
+
+    Check('K2  attributes intact (Path=/, HttpOnly, SameSite=Lax, Max-Age=3600)',
+      (Pos('Path=/', R.Cookies) > 0) and (Pos('HttpOnly', R.Cookies) > 0) and
+      (Pos('SameSite=Lax', R.Cookies) > 0) and (Pos('Max-Age=3600', R.Cookies) > 0),
+      Format('set-cookie=<%s>', [StringReplace(R.Cookies, #10, ' | ', [rfReplaceAll])]));
+  end
+  else
+    Check('K1  GET /cookies', False, 'timeout');
 
 end;
 

@@ -50,6 +50,7 @@ uses
 {$ENDIF}
   Horse,
   Horse.Commons,
+  Horse.Core.Cookie,
   Horse.Provider.CrossSocket,
   Horse.Provider.CrossSocket.Pool;
 
@@ -63,6 +64,10 @@ const
   STREAM_SMALL_PAYLOAD =
     'stream-body-OK-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   STREAM_LARGE_LEN = 65536;   // large body — guards against truncation
+
+  // ── Wildcard + SendFile regression (Section J) ────────────────────────────────
+  // Payload served by the Get('/*') catch-all via SendFile.  Must match the client.
+  WILDCARD_PAYLOAD = 'wildcard-sendfile-OK-0123456789-ABCDEF';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -340,6 +345,52 @@ begin
       Res.ContentType('application/json; charset=utf-8')
          .Send(Format('{"field1":"%s","field2":"%s","fileLen":%d,"fileContent":"%s"}',
            [JE(LField1), JE(LField2), LFileLen, JE(LFileContent)]));
+    end
+  );
+
+  // ── RFC 6265 cookies (Section K — PATCH-COOKIE-1) ─────────────────────────────
+  // Sets TWO cookies with attributes via the new typed API.  Verifies the
+  // response carries two distinct Set-Cookie lines (the header map could only
+  // hold one before) with correct attribute syntax.
+  THorse.Get('/cookies',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.Cookie('sid', 'abc123').Path('/').HttpOnly(True).SameSite(ssLax);
+      Res.Cookie('theme', 'dark').MaxAge(3600);
+      Res.ContentType('text/plain').Send('cookies-set');
+    end
+  );
+
+  // ── Wildcard catch-all + SendFile (Section J — verifies PATCH-SENDFILE-1) ─────
+  //
+  // GET '/*'  — Horse's catch-all: any path not matched by a registered route
+  // falls through here (RouterTree '/*' fallback).  The handler serves a file
+  // via SendFile, mirroring the user-reported pattern EXACTLY:
+  //   open a stream → Res.SendFile(stream, ...) → FreeAndNil(stream) in finally.
+  //
+  // Before PATCH-SENDFILE-1 this was a use-after-free: SendFile kept a NON-owning
+  // reference and CrossSocket's Send(TStream) reads the stream ASYNCHRONOUSLY on the
+  // IO thread after the handler returns, so the FreeAndNil below destroyed it first
+  // (AV/500).  PATCH-SENDFILE-1 makes SendFile COPY the source at call time and the
+  // bridge drains it to bytes + Send(TBytes) (async-safe); the FreeAndNil is now
+  // harmless and the file is delivered correctly.
+  //
+  // (Uses an in-handler TStringStream instead of a TFileStream so no file on disk
+  // is needed; the ownership behaviour is identical.)
+  THorse.Get('/*',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LStream: TStringStream;
+    begin
+      try
+        LStream := TStringStream.Create(WILDCARD_PAYLOAD);
+        Res.SendFile(LStream, 'wildcard.bin', 'application/octet-stream').Status(200);
+      finally
+        try
+          FreeAndNil(LStream);
+        except on E: Exception do
+        end;
+      end;
     end
   );
 
