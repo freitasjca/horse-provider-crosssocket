@@ -77,6 +77,8 @@ var
   GListenQueue:   Integer;   // --listenqueue N : accepted for parity; Indy-only (ignored here)
   GAsync:         Boolean;   // --async   : host THttpAsyncServer instead of THttpServer
   GHttpApi:       Boolean;   // --httpapi : host Windows http.sys THttpApiServer (Win only)
+  GTls:           Boolean;   // --tls   : listen HTTPS on BASE_PORT + BENCH_PORT_TLS_OFFSET
+  GMtls:          Boolean;   // --mtls  : require + verify a client cert (implies --tls)
 
 {$IFDEF MSWINDOWS}
 function CtrlHandler(dwCtrlType: DWORD): BOOL; stdcall;
@@ -122,6 +124,25 @@ begin
   end;
 end;
 
+{ Locate the TLS fixture certs (samples/bench/certs/, or a parent) for --tls. }
+function CertPath(const AName: string): string;
+const
+  CANDIDATES: array[0..3] of string = (
+    'certs', '..\certs', '..\..\certs', '..\..\..\certs');
+var
+  LBase, LCand: string;
+  I: Integer;
+begin
+  LBase := ExtractFilePath(ParamStr(0));
+  for I := Low(CANDIDATES) to High(CANDIDATES) do
+  begin
+    LCand := LBase + CANDIDATES[I] + PathDelim;
+    if FileExists(LCand + 'server.crt') then
+      Exit(LCand + AName);
+  end;
+  Result := 'certs' + PathDelim + AName;
+end;
+
 begin
   GModeBoth      := HasSwitch('middleware');
   GModeGuard     := HasSwitch('guard-only');
@@ -132,8 +153,13 @@ begin
   GListenQueue   := GetSwitchInt('listenqueue', 0);
   GAsync         := HasSwitch('async');
   GHttpApi       := HasSwitch('httpapi');
+  GMtls          := HasSwitch('mtls');
+  GTls           := GMtls or HasSwitch('tls');
   GAnyMiddleware := GModeBoth or GModeGuard or GModeHeaders or GModeHdrBefore or GModeCors;
-  GPort          := BASE_PORT + (BENCH_PORT_MW_OFFSET * Ord(GAnyMiddleware));
+  if GTls then
+    GPort := BASE_PORT + BENCH_PORT_TLS_OFFSET
+  else
+    GPort := BASE_PORT + (BENCH_PORT_MW_OFFSET * Ord(GAnyMiddleware));
 
   {$IFDEF MSWINDOWS}
   SetConsoleCtrlHandler(@CtrlHandler, True);
@@ -191,8 +217,11 @@ begin
 
   RegisterBenchRoutes;
 
-  WriteLn(Format('[HorseBench/mORMot] Listening on http://127.0.0.1:%d  [%s]  server=%s',
-    [GPort, GModeLabel,
+  if GTls then
+    GModeLabel := GModeLabel + IfThen(GMtls, '+mtls', '+tls');
+
+  WriteLn(Format('[HorseBench/mORMot] Listening on %s://127.0.0.1:%d  [%s]  server=%s',
+    [IfThen(GTls, 'https', 'http'), GPort, GModeLabel,
      IfThen(GHttpApi, 'THttpApiServer (http.sys)',
        IfThen(GAsync, 'THttpAsyncServer', 'THttpServer'))]));
   WriteLn('Active provider class: ' + THorse.ClassName);
@@ -226,13 +255,27 @@ begin
   // this is a clean A/B of the backends. --httpapi (http.sys) is Windows-only —
   // the provider raises at Listen on other platforms, and needs admin rights or
   // a urlacl (netsh http add urlacl url=http://+:<port>/ user=<acct>).
-  if GHttpApi or GAsync then
+  // --tls folds into the same config path. TLS applies to the socket backends
+  // (default thread-pool, --async); --tls + --httpapi is rejected by the provider
+  // (http.sys binds its cert via netsh, not THorseMormotConfig).
+  if GHttpApi or GAsync or GTls then
   begin
     var LConfig := THorseMormotConfig.Default;
     if GHttpApi then
       LConfig.ServerKind := mskHttpApi
-    else
+    else if GAsync then
       LConfig.ServerKind := mskAsync;
+    if GTls then
+    begin
+      LConfig.SSLEnabled     := True;
+      LConfig.SSLCertFile    := CertPath('server.crt');
+      LConfig.SSLPrivKeyFile := CertPath('server.key');
+      if GMtls then
+      begin
+        LConfig.SSLCACertFile := CertPath('ca.crt');
+        LConfig.SSLVerifyPeer := True;
+      end;
+    end;
     THorse.ListenWithConfig(GPort, LConfig);
   end
   else

@@ -95,8 +95,10 @@ design rationale next to the patches. Documents:
   patches can be hand-grafted onto a future upstream version if `git
   apply --3way` ever fails)
 - The patch-regeneration procedure (`diff -u` against upstream pristine)
-- The 15-file CnPack manifest with the exact `cnvcl` → fork path mapping
-  and the transitive-closure reasoning
+- The 18-file CnPack manifest (1 `.inc` + 17 `.pas`, split `CnPack/Common` +
+  `CnPack/Crypto`) — the workflow `find`s each unit wherever it lives in
+  `cnvcl/Source` (resilient to upstream relocations) and fails loudly if the
+  transitive closure is broken
 
 ### `.sync/patches/Net.CrossSslSocket.Base.pas.patch` — 57 lines
 

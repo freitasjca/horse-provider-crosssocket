@@ -15,7 +15,7 @@ REM  --maxconn 256 to every Horse server so the cap is lifted and every request
 REM  does real work (0 5xx) -- the RPS then reflects true throughput.
 REM
 REM  Tiers measured (one server at a time, all others killed), RUNS averaged:
-REM    raw-mormot     bare / +headers / (async ×2) / (httpapi ×2)  (HorseBenchRawMormot, 9005)
+REM    raw-mormot     bare / +headers / (async Ã—2) / (httpapi Ã—2)  (HorseBenchRawMormot, 9005)
 REM      NOTE: the (httpapi) rows use Windows http.sys and need this script run as
 REM      Administrator, OR a one-time per-port urlacl, e.g.:
 REM        netsh http add urlacl url=http://+:9003/ user=Everyone
@@ -243,7 +243,7 @@ REM ============================================================================
     set _P95=-
     set _P99=-
     call :PRINTROW
-    REM http.sys (--httpapi) cells fail to listen when the URL ACL is missing —
+    REM http.sys (--httpapi) cells fail to listen when the URL ACL is missing â€”
     REM point the operator straight at the fix instead of a bare "noListen".
     echo !_ARGS! | findstr /I "httpapi" >nul 2>&1
     if not errorlevel 1 echo        NOTE: http.sys needs a URL ACL. Run this script elevated, or once: netsh http add urlacl url=http://+:!_PORT!/ user=%USERDOMAIN%\%USERNAME%  (see bench-perf-ladder-windows.md section 3)

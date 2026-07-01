@@ -108,11 +108,13 @@ type
 // ── Provider and scenario definitions ─────────────────────────────────────────
 
 const
-  PROVIDER_COUNT  = 6;
+  PROVIDER_COUNT  = 8;
   SCENARIO_COUNT  = 5;
 
   // MwPort = 0 means this provider has no middleware variant — the middleware
   // loop iteration is skipped automatically.
+  // NOTE: a provider whose server is not running is reported as all-errors for
+  // its rows; start only the servers you want to compare.
   PROVIDERS: array[0..PROVIDER_COUNT - 1] of TProviderDef = (
     (Name: 'Indy';           BarePort: BENCH_PORT_INDY_BARE;
                              MwPort:   BENCH_PORT_INDY_BARE        + BENCH_PORT_MW_OFFSET),
@@ -120,11 +122,15 @@ const
                              MwPort:   BENCH_PORT_CROSSSOCKET_BARE + BENCH_PORT_MW_OFFSET),
     (Name: 'mORMot';         BarePort: BENCH_PORT_MORMOT_BARE;
                              MwPort:   BENCH_PORT_MORMOT_BARE      + BENCH_PORT_MW_OFFSET),
+    (Name: 'ICS';            BarePort: BENCH_PORT_ICS_BARE;
+                             MwPort:   BENCH_PORT_ICS_BARE         + BENCH_PORT_MW_OFFSET),
     (Name: 'Raw-CrossSocket';BarePort: BENCH_PORT_RAW_CROSSSOCKET;
                              MwPort:   0),
     (Name: 'Raw-mORMot';     BarePort: BENCH_PORT_RAW_MORMOT;
                              MwPort:   0),
     (Name: 'Raw-Indy';       BarePort: BENCH_PORT_RAW_INDY;
+                             MwPort:   0),
+    (Name: 'Raw-ICS';        BarePort: BENCH_PORT_RAW_ICS;
                              MwPort:   0)
   );
 
@@ -366,10 +372,11 @@ var
 
 begin
   WriteLn('[HorseBench] Horse provider performance comparison');
-  WriteLn('[HorseBench] Ensure all 9 server binaries are listening before proceeding.');
+  WriteLn('[HorseBench] Start the server binaries you want to compare (missing ones show as errors).');
   WriteLn('[HorseBench]   Indy bare        :9001  CrossSocket bare    :9002  mORMot bare    :9003');
   WriteLn('[HorseBench]   Indy +mw         :9011  CrossSocket +mw     :9012  mORMot +mw     :9013');
-  WriteLn('[HorseBench]   Raw-CrossSocket  :9004  Raw-mORMot          :9005  Raw-Indy       :9006');
+  WriteLn('[HorseBench]   ICS bare         :9009  ICS +mw             :9019');
+  WriteLn('[HorseBench]   Raw-CrossSocket  :9004  Raw-mORMot          :9005  Raw-Indy       :9006  Raw-ICS :9010');
   WriteLn('');
 
   Results    := TList<TBenchResult>.Create;

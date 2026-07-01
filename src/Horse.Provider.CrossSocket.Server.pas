@@ -58,16 +58,18 @@
     SSLEnabled       → TCrossHttpServer constructor argument
     SSLCertFile      → FServer.SetCertificateFile
     SSLKeyFile       → FServer.SetPrivateKeyFile
-    SSLCACertFile    → FServer.SetCACertificateFile  (mTLS)
-    SSLVerifyPeer    → FServer.SetVerifyPeer          (mTLS)
+    SSLCACertFile    → FServer.SetCACertificateFile     (mTLS)
+    SSLVerifyPeer    → FServer.SetVerifyPeer             (mTLS)
+    SSLKeyPassword   → FServer.SetPrivateKeyPassword     (TLSOPT-1, before key)
+    SSLCipherList    → FServer.SetCipherList             (TLSOPT-2)
+
+  TLSOPT-1/2 are additive patches to Delphi-Cross-Socket (Net.CrossSslSocket.Base
+  + .OpenSSL), alongside the mTLS patches — apply both, or use the fork release.
 
   Reserved (CrossSocket API not available):
     KeepAliveTimeout — no matching property confirmed in TCrossHttpServer
     ReadTimeout      — no matching property confirmed in TCrossHttpServer
     MaxConnections   — no matching property confirmed in TCrossHttpServer
-    SSLKeyPassword   — no key-password API confirmed in TCrossSslSocketBase
-    SSLCipherList    — no SetCipherList method on TCrossSslSocketBase;
-                       cipher list is set internally in TCrossOpenSslSocket._InitSslCtx
 
   ── Security notes ───────────────────────────────────────────────────────────
   [SEC-1] MaxHeaderSize + MaxPostDataSize enforced to safe defaults.
@@ -268,6 +270,13 @@ begin
     if FConfig.SSLCertFile <> '' then
       FServer.SetCertificateFile(FConfig.SSLCertFile);
 
+    // ── [TLSOPT-1] Passphrase for an encrypted private key ────────────────
+    // Must be set BEFORE SetPrivateKeyFile so the key is parsed with the
+    // passphrase available (TCrossOpenSslSocket.SetPrivateKey reads it via the
+    // OpenSSL PEM password callback). Empty → unchanged unencrypted-key path.
+    if FConfig.SSLKeyPassword <> '' then
+      FServer.SetPrivateKeyPassword(FConfig.SSLKeyPassword);
+
     if FConfig.SSLKeyFile <> '' then
       FServer.SetPrivateKeyFile(FConfig.SSLKeyFile);
 
@@ -308,6 +317,12 @@ begin
         'certificates and all connections will be rejected.');
 
     FServer.SetVerifyPeer(FConfig.SSLVerifyPeer);
+
+    // ── [TLSOPT-2] Override the TLS 1.2 cipher list ───────────────────────
+    // SetCipherList calls SSL_CTX_set_cipher_list and raises if the string
+    // selects no ciphers. Empty → keep CrossSocket's built-in modern default.
+    if FConfig.SSLCipherList <> '' then
+      FServer.SetCipherList(FConfig.SSLCipherList);
   end;
 end;
 
@@ -340,21 +355,13 @@ end;
 
 procedure THorseCrossSocketServer.IncrementActive;
 begin
-  {$IF DEFINED(FPC)}
-  if InterlockedIncrement(FActiveConns) = 1 then
-  {$ELSE}
   if TInterlocked.Increment(FActiveConns) = 1 then
-  {$ENDIF}
     FDrainEvent.ResetEvent;  // first active request — block drain wait
 end;
 
 procedure THorseCrossSocketServer.DecrementActive;
 begin
-  {$IF DEFINED(FPC)}
-  if InterlockedDecrement(FActiveConns) = 0 then
-  {$ELSE}
   if TInterlocked.Decrement(FActiveConns) = 0 then
-  {$ENDIF}
     FDrainEvent.SetEvent;    // all requests done — unblock Stop
 end;
 

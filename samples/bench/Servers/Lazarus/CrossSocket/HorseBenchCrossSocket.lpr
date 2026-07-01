@@ -52,7 +52,8 @@ uses
   Horse.Provider.CrossSocket.WorkerPool,
   Horse.Middleware.RequestGuard,
   Horse.Middleware.SecurityHeaders,
-  Horse.BenchRoutes in '../../../Common/Horse.BenchRoutes.pas';
+  Horse.BenchRoutes in '../../../Common/Horse.BenchRoutes.pas',
+  FPC.StackChkStubs in 'FPC.StackChkStubs.pas';
 
 const
   BASE_PORT = BENCH_PORT_CROSSSOCKET_BARE;

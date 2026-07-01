@@ -39,18 +39,19 @@
   [SEC-7]  Complete Reset guarantee.
            THorseRequest.Clear (PATCH-REQ-2) handles every security-sensitive
            field internally:
-             FBody       := nil   (non-owning CrossSocket buffer ref, NEVER freed)
-             FSession    := nil   (stale session = wrong-request auth)
+             FBody       — nil'd if FOwnsBody=False (CrossSocket non-owning ref);
+                           freed if FOwnsBody=True (middleware-owned object, e.g.
+                           Jhonson JSON).  FOwnsBody reset to False. (PATCH-REQ-11)
+             FSession    — freed if FOwnsSession=True; nil'd otherwise.
              FWebRequest := nil   (previous Indy context, now invalid)
-             FHeaders, FParams    Dictionary.Clear in place
+             FHeaders, FParams    Clear in place
              FQuery, FContentFields, FCookie  FreeAndNil (lazy rebuild)
-             FSessions            FreeAndNil + THorseSessions.Create
+             FSessions            Clear in place (PATCH-SES-1)
            THorseResponse.Clear (PATCH-RES-2) handles:
              FWebResponse  := nil
              FContent      := nil
              FCustomHeaders.Clear in place
-           Reset delegates entirely to Clear — the old Body(nil) pre-call has
-           been removed (see [SEC-9] below for why).
+           Reset delegates entirely to Clear — no Body() setter calls needed.
 
            NOTE: THorseRequest exposes no settable properties for Method,
            PathInfo, RawPathInfo, RemoteAddr, or ContentType.  Those fields
@@ -61,23 +62,15 @@
            In DEBUG mode the InUse flag is checked on Acquire and Release to
            catch double-acquire and double-release programming errors.
 
-  [SEC-9]  FBody ownership — double-free fix.
-           FBody is a non-owning reference into CrossSocket's receive buffer.
-           It must NEVER be freed by the pool.
-
-           The upstream THorseRequest.Body(const ABody: TObject) SETTER frees
-           the existing FBody before assigning the new one (standard Delphi
-           ownership pattern for Indy's parsed body objects).  On the
-           CrossSocket path FBody is non-owning — calling the setter to clear
-           it frees a pointer that CrossSocket's TCrossHttpRequest.Destroy will
-           also try to free, producing an EInvalidPointer double-free on every
-           POST request.
-
-           Fix: do NOT call FRequest.Body(nil) anywhere in this unit.
-           THorseRequest.Clear (PATCH-REQ-2) sets FBody := nil directly
-           (without freeing) — that is the only safe way to clear it.
-           Destroy calls FRequest.Clear before FRequest.Free so that
-           THorseRequest.Destroy sees FBody = nil and skips its own Free.
+  [SEC-9]  FBody ownership — non-owning CrossSocket buffer reference.
+           MapBody calls Body(stream, {AOwnsBody=}False) so FOwnsBody stays
+           False on the CrossSocket path.  THorseRequest.Clear checks FOwnsBody
+           before calling FreeAndNil — False means only nil the pointer, never
+           free the referent.  CrossSocket's TCrossHttpRequest remains the sole
+           owner and frees its own stream in its Destroy.
+           If middleware (e.g. Jhonson) later calls Body(ParsedObj) [default
+           AOwnsBody=True], Clear will correctly free that owned object on pool
+           recycle — no Body() setter calls needed anywhere in this unit.
 
   [SEC-10] Pool counter uses TInterlocked for the hot-path IdleCount read.
            Structural changes (Push/Pop) still happen under FLock.
@@ -163,11 +156,10 @@ end;
 
 destructor THorseContext.Destroy;
 begin
-  // [SEC-9] FBody is a non-owning CrossSocket buffer reference — never free it.
-  // DO NOT call FRequest.Body(nil): the Body(AObject) setter frees the existing
-  // FBody before assigning, which double-frees CrossSocket's stream.
-  // Instead, call Clear first: it sets FBody := nil directly without freeing.
-  // After Clear, THorseRequest.Destroy sees FBody = nil and skips its Free.
+  // [SEC-9] Clear before Free: FOwnsBody=False on the CrossSocket path so
+  // Clear nils FBody without freeing it.  THorseRequest.Destroy then sees
+  // FOwnsBody=False and skips the Free, preventing double-free.  If middleware
+  // set an owned body (FOwnsBody=True), Clear frees it here — correct.
   FRequest.Clear;
   FRequest.Free;
   FResponse.Free;
@@ -178,16 +170,13 @@ procedure THorseContext.Reset;
 begin
   // ── [SEC-7][SEC-9] Delegate to patched Clear methods ─────────────────────
   // THorseRequest.Clear (PATCH-REQ-2) safely wipes all fields including FBody:
-  //   FBody := nil   — direct assignment, NEVER calls Free (non-owning ref)
-  //   FSession, FWebRequest → nil
-  //   FHeaders.Dictionary.Clear
+  //   FBody — nil'd (FOwnsBody=False, CrossSocket non-owning ref) or freed
+  //           (FOwnsBody=True, e.g. Jhonson JSON object owned by middleware).
+  //           FOwnsBody reset to False. (PATCH-REQ-11)
+  //   FSession, FWebRequest → nil / freed per FOwnsSession
+  //   FHeaders, FParams   → Clear in place
   //   FQuery, FContentFields, FCookie → FreeAndNil (lazy rebuild on next use)
-  //   FParams.Dictionary.Clear
-  //   FSessions → FreeAndNil + THorseSessions.Create
-  //
-  // DO NOT call FRequest.Body(nil) before this.  The Body(AObject) setter
-  // frees the existing FBody, which double-frees CrossSocket's TMemoryStream
-  // (see [SEC-9]).  Clear handles FBody := nil correctly on its own.
+  //   FSessions → Clear in place (PATCH-SES-1)
   FRequest.Clear;
 
   // Response.Clear (PATCH-RES-2) wipes:
