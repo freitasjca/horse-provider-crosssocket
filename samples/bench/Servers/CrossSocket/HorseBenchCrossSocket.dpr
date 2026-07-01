@@ -31,17 +31,17 @@
 uses
   {$IFDEF MSWINDOWS}
   Winapi.Windows,
-  {$ENDIF }
+  {$ENDIF}
   System.SysUtils,
   System.StrUtils,
   Horse,
+  Horse.Provider.Config,           // THorseCrossSocketConfig (--tls)
   Horse.Provider.CrossSocket,
   Horse.Provider.CrossSocket.WorkerPool,
   Horse.Middleware.RequestGuard,
   Horse.Middleware.SecurityHeaders,
   Horse.CORS,
-  Horse.BenchRoutes in '..\..\Common\Horse.BenchRoutes.pas',
-  Horse.Provider.CrossSocket.Response in '..\..\..\..\src\Horse.Provider.CrossSocket.Response.pas';
+  Horse.BenchRoutes in '..\..\Common\Horse.BenchRoutes.pas';
 
 const
   BASE_PORT = BENCH_PORT_CROSSSOCKET_BARE;
@@ -57,6 +57,8 @@ var
   GPort:          Integer;
   GMaxConn:       Integer;   // --maxconn N : THorse.MaxConnections override (0 = leave default)
   GListenQueue:   Integer;   // --listenqueue N : accepted for parity; Indy-only (ignored here)
+  GTls:           Boolean;   // --tls   : listen HTTPS on BASE_PORT + BENCH_PORT_TLS_OFFSET
+  GMtls:          Boolean;   // --mtls  : require + verify a client cert (implies --tls)
 
 {$IFDEF MSWINDOWS}
 function CtrlHandler(dwCtrlType: DWORD): BOOL; stdcall;
@@ -102,6 +104,25 @@ begin
   end;
 end;
 
+{ Locate the TLS fixture certs (samples/bench/certs/, or a parent) for --tls. }
+function CertPath(const AName: string): string;
+const
+  CANDIDATES: array[0..3] of string = (
+    'certs', '..\certs', '..\..\certs', '..\..\..\certs');
+var
+  LBase, LCand: string;
+  I: Integer;
+begin
+  LBase := ExtractFilePath(ParamStr(0));
+  for I := Low(CANDIDATES) to High(CANDIDATES) do
+  begin
+    LCand := LBase + CANDIDATES[I] + PathDelim;
+    if FileExists(LCand + 'server.crt') then
+      Exit(LCand + AName);
+  end;
+  Result := 'certs' + PathDelim + AName;   // last resort: CWD-relative
+end;
+
 begin
   GModeBoth      := HasSwitch('middleware');
   GModeGuard     := HasSwitch('guard-only');
@@ -110,8 +131,14 @@ begin
   GModeCors      := HasSwitch('cors');
   GMaxConn       := GetSwitchInt('maxconn', 0);
   GListenQueue   := GetSwitchInt('listenqueue', 0);
+  GMtls          := HasSwitch('mtls');
+  GTls           := GMtls or HasSwitch('tls');
   GAnyMiddleware := GModeBoth or GModeGuard or GModeHeaders or GModeHdrBefore or GModeCors;
-  GPort          := BASE_PORT + (BENCH_PORT_MW_OFFSET * Ord(GAnyMiddleware));
+  // --tls re-listens HTTPS on a dedicated TLS port; otherwise bare/middleware port.
+  if GTls then
+    GPort := BASE_PORT + BENCH_PORT_TLS_OFFSET
+  else
+    GPort := BASE_PORT + (BENCH_PORT_MW_OFFSET * Ord(GAnyMiddleware));
 
   {$IFDEF MSWINDOWS}
   SetConsoleCtrlHandler(@CtrlHandler, True);
@@ -169,8 +196,11 @@ begin
 
   RegisterBenchRoutes;
 
-  WriteLn(Format('[HorseBench/CrossSocket] Listening on http://127.0.0.1:%d  [%s]',
-    [GPort, GModeLabel]));
+  if GTls then
+    GModeLabel := GModeLabel + IfThen(GMtls, '+mtls', '+tls');
+
+  WriteLn(Format('[HorseBench/CrossSocket] Listening on %s://127.0.0.1:%d  [%s]',
+    [IfThen(GTls, 'https', 'http'), GPort, GModeLabel]));
   WriteLn('Active provider class: ' + THorse.ClassName);
   WriteLn('Press Ctrl-C to stop.');
 
@@ -197,7 +227,21 @@ begin
     {$IFEND}
   end;
 
-  THorse.Listen(GPort);
+  if GTls then
+  begin
+    var LCfg := THorseCrossSocketConfig.Default;
+    LCfg.SSLEnabled  := True;
+    LCfg.SSLCertFile := CertPath('server.crt');
+    LCfg.SSLKeyFile  := CertPath('server.key');
+    if GMtls then
+    begin
+      LCfg.SSLCACertFile := CertPath('ca.crt');   // requires the Net.CrossSslSocket.* mTLS patches
+      LCfg.SSLVerifyPeer := True;
+    end;
+    THorseProviderCrossSocket.ListenWithConfig(GPort, LCfg);
+  end
+  else
+    THorse.Listen(GPort);
 
   WriteLn('[HorseBench/CrossSocket] Stopped cleanly.');
 end.

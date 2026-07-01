@@ -2,6 +2,8 @@
 
 All scripts are run from the **repository root** (`horse-provider-crosssocket\`), not from inside `scripts\`.
 
+> **Running benchmarks & tests?** See [`BENCH-RUNBOOK.md`](BENCH-RUNBOOK.md) — a single runbook with the exact command for every integration test, comparison bench, and load/analysis bench (HTTP, HTTPS, and mutual TLS).
+
 ---
 
 ## Quick start (Windows CLI)
@@ -78,6 +80,26 @@ Starts `HorseCSTestServer.exe` on port 9100, waits for it to accept connections 
 Exit code = number of failed tests (`0` = all 14 passed).
 
 The server is always killed on exit, even if the client crashes or the script is interrupted.
+
+---
+
+### `run-tls-tests.bat [Platform] [Config]`
+
+Runs the CrossSocket **TLS / mutual-TLS integration test** (`HorseCSTLSTestServer` +
+`HorseCSTLSTestClient`) in two passes — one-way TLS, then mutual TLS — on port 9101.
+Copies `tests\certs` next to the binaries if missing. Exit code = total failed
+assertions. The mutual-TLS pass needs the two `Net.CrossSslSocket.*` mTLS patches (or
+the fork release). The mORMot and ICS providers ship parallel `Horse*TLSTest*` pairs
+in their own repos (ports 9201 / 9111).
+
+### `bench-tls.bat [--mtls]` · `bench-tls.sh [--mtls]`
+
+Throughput bench for **HTTPS across all three TLS-capable providers** — CrossSocket
+(:9032), mORMot (:9033), ICS (:9039). Starts each `HorseBench<Provider>` server with
+`--tls` (or `--mtls`), runs `HorseBenchTLSClient` (RPS + p50/p99 per provider), then
+stops the servers. Copies `samples\bench\certs` next to the binaries if missing. The
+`.sh` variant runs the Delphi-Linux64 builds. See
+[`samples/bench/README.md`](../samples/bench/README.md) for the full bench layout.
 
 ---
 

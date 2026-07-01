@@ -57,4 +57,14 @@ LeftCol=1
 Elisions=
 Bookmarks=
 EditViewName=C:\lang\Repo\horse-provider-crosssocket\samples\tests\Delphi\Console\HorseCSConsoleTestServer.dpr
+[ClosedView_QzpcbGFuZ1xSZXBvXERlbHBoaS1Dcm9zcy1Tb2NrZXRcTmV0XE5ldC5Dcm9zc1NzbFNvY2tldC5P
+cGVuU1NMLnBhcw==]
+Module=C:\lang\Repo\Delphi-Cross-Socket\Net\Net.CrossSslSocket.OpenSSL.pas
+CursorX=51
+CursorY=214
+TopLine=184
+LeftCol=1
+Elisions={{867,2},{906,13},{'采用新型加密套件进行加密'}}
+Bookmarks=
+EditViewName=C:\lang\Repo\Delphi-Cross-Socket\Net\Net.CrossSslSocket.OpenSSL.pas
 

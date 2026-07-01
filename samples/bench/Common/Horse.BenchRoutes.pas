@@ -43,6 +43,20 @@ const
   // FPC analog of BENCH_PORT_RAW_INDY (raw default self-hosted transport).
   BENCH_PORT_RAW_FPC_HTTP     = 9008;
 
+  // OverbyteICS provider (Delphi; Windows + POSIX/Linux64).
+  BENCH_PORT_ICS_BARE         = 9009;
+
+  // Raw transport baseline: pure ICS THttpServer, no Horse. ICS analog of
+  // BENCH_PORT_RAW_CROSSSOCKET. (Also defined locally in the raw server, which
+  // does not use this unit.)
+  BENCH_PORT_RAW_ICS          = 9010;
+
+  // TLS / HTTPS variants. The TLS-capable self-hosted providers (CrossSocket,
+  // mORMot, ICS) re-listen on bare_port + BENCH_PORT_TLS_OFFSET when started with
+  // --tls. Chosen to avoid the integration-test TLS ports (9101/9111/9201).
+  //   CrossSocket  9032   mORMot  9033   ICS  9039
+  BENCH_PORT_TLS_OFFSET       = 30;
+
   ALLOC_BODY_SIZE = 1024;             // bytes returned by GET /alloc
 
 procedure RegisterBenchRoutes;

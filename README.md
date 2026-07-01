@@ -593,6 +593,33 @@ Cfg.SSLVerifyPeer := True;            // reject clients without a valid cert
 >
 > If `SSLVerifyPeer = True` but the mTLS patches haven't been applied, the build will fail with `E2003 Undeclared identifier: 'SetCACertificateFile'` / `'SetVerifyPeer'`. There is no plan in `winddriver/Delphi-Cross-Socket` mainline yet for these APIs — an upstream PR is in preparation.
 
+### TLS integration test
+
+`tests/HorseCSTLSTestServer.dpr` + `HorseCSTLSTestClient.dpr` exercise both one-way
+HTTPS and mutual TLS against a self-signed fixture PKI in `tests/certs/`
+(regenerate with `tests/certs/gen-certs.sh`). Run the server (`mtls` argument flips
+on `SSLVerifyPeer`), then the client with the matching argument — exit code is the
+number of failed assertions. Full runbook in [`tests/TLS-TESTS.md`](tests/TLS-TESTS.md).
+The mTLS path needs the two `Net.CrossSslSocket.*` patches above.
+
+### Encrypted private keys & custom cipher list
+
+```delphi
+Cfg.SSLKeyPassword := 'my-key-passphrase';   // TLSOPT-1 — decrypt an encrypted PEM key
+Cfg.SSLCipherList  := 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384';  // TLSOPT-2
+```
+
+- **`SSLKeyPassword`** — set the passphrase for an **encrypted** PEM private key. The
+  provider calls `SetPrivateKeyPassword` before loading the key; OpenSSL parses it with
+  a PEM password callback. Empty (default) keeps the unencrypted-key path.
+- **`SSLCipherList`** — override the **TLS 1.2** cipher list (`SSL_CTX_set_cipher_list`);
+  raises if the string selects no ciphers. Empty keeps CrossSocket's built-in modern
+  default. TLS 1.3 cipher suites are not affected.
+
+> Like mTLS, both ride the **`Net.CrossSslSocket.*` patches** (tags `TLSOPT-1`/`TLSOPT-2`)
+> or the fork release. They are no-ops you can ignore on a plain unencrypted-key,
+> default-cipher setup.
+
 ---
 
 ## Advanced Configuration
