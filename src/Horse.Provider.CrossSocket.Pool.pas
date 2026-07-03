@@ -63,7 +63,7 @@
            catch double-acquire and double-release programming errors.
 
   [SEC-9]  FBody ownership — non-owning CrossSocket buffer reference.
-           MapBody calls Body(stream, {AOwnsBody=}False) so FOwnsBody stays
+           MapBody calls Body(stream, {AOwnsBody=False) so FOwnsBody stays
            False on the CrossSocket path.  THorseRequest.Clear checks FOwnsBody
            before calling FreeAndNil — False means only nil the pointer, never
            free the referent.  CrossSocket's TCrossHttpRequest remains the sole
