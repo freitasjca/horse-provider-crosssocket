@@ -120,16 +120,14 @@ uses
     Req.RawWebRequest returns an instance of TCrossSocketWebRequest on the
     CrossSocket path so that existing Horse middleware using
     Req.RawWebRequest.Method / .Host / .GetFieldByName(...) works unchanged. }
-  Horse.Provider.CrossSocket.WebRequestAdapter
+  Horse.Provider.CrossSocket.WebRequestAdapter;
   // TMethodType and its constants (mtAny, mtGet, mtPut, mtPost, mtHead,
-  // mtDelete, mtPatch) live in Web.HTTPApp on Delphi, and are declared in
-  // Horse.Commons under {$IF DEFINED(FPC)} on FPC.
-  // NOTE: mtOptions does NOT exist in TMethodType on either platform.
+  // mtDelete, mtPatch, mtQuery) are declared in Horse.Commons on BOTH
+  // compilers since the 2026-07 upstream sync. Web.HTTPApp must NOT be in
+  // this uses clause — its own TMethodType would shadow Horse.Commons' enum
+  // and break THorseRequest.Populate with E2010.
+  // NOTE: mtOptions does NOT exist in TMethodType.
   // OPTIONS requests map to mtAny in MapMethodType.
-{$IF NOT DEFINED(FPC)}
-  , Web.HTTPApp
-{$ENDIF}
-  ;
 
 const
   // [SEC-13]
@@ -329,8 +327,8 @@ begin
   else if SameText(AMethod, 'DELETE')  then Result := mtDelete
   else if SameText(AMethod, 'PATCH')   then Result := mtPatch
   else if SameText(AMethod, 'HEAD')    then Result := mtHead
-  // mtOptions does not exist in TMethodType on either Delphi (Web.HTTPApp)
-  // or FPC (Horse.Commons). OPTIONS falls through to mtAny — Horse routes
+  // mtOptions does not exist in Horse.Commons.TMethodType (both compilers).
+  // OPTIONS falls through to mtAny — Horse routes
   // it via wildcard matching, the same as any other unrecognised method.
   else                                      Result := mtAny;
 end;

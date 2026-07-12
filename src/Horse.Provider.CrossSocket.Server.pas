@@ -169,7 +169,9 @@ type
     constructor Create; overload;
     destructor  Destroy; override;
 
-    procedure Start(const APort: Integer);
+    // AHost: '' or '0.0.0.0' = all interfaces (IPv4 + IPv6); anything else
+    // becomes the CrossSocket bind Addr. Set by the Listen overload family.
+    procedure Start(const APort: Integer; const AHost: string = '');
     // [SEC-6] Synchronous stop — waits up to Config.DrainTimeoutMs
     procedure Stop;
 
@@ -365,13 +367,18 @@ begin
     FDrainEvent.SetEvent;    // all requests done — unblock Stop
 end;
 
-procedure THorseCrossSocketServer.Start(const APort: Integer);
+procedure THorseCrossSocketServer.Start(const APort: Integer; const AHost: string);
 begin
   // Port and Addr are confirmed properties on TCrossServer (Net.CrossServer.pas).
   // Must be set before calling Start.
   // Start signature: procedure Start(const ACallback: TCrossListenCallback = nil)
   FServer.Port := APort;
-  FServer.Addr := '';   // '' = listen on all interfaces (IPv4 + IPv6)
+  // '' = listen on all interfaces (IPv4 + IPv6). Horse's conventional
+  // '0.0.0.0' means the same thing — normalise so callers can pass either.
+  if (AHost = '') or (AHost = '0.0.0.0') then
+    FServer.Addr := ''
+  else
+    FServer.Addr := AHost;
   FServer.Start;
 end;
 
