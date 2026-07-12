@@ -1,4 +1,4 @@
-unit Horse.Provider.CrossSocket.RawRequest;
+﻿unit Horse.Provider.CrossSocket.RawRequest;
 
 {
   CrossSocket IHorseRawRequest implementation
@@ -57,6 +57,7 @@ type
     function  GetContentLength: Integer;
 {$IFEND}
     function  GetFieldByName(const AName: string): string;
+    procedure PopulateHeaders(ADest: TStrings);
     procedure PopulateQueryFields(ADest: TStrings);
     procedure PopulateContentFields(ADest: TStrings);
     procedure PopulateCookieFields(ADest: TStrings);
@@ -162,6 +163,16 @@ end;
 function TCrossSocketRawRequest.GetFieldByName(const AName: string): string;
 begin
   Result := FCrossReq.Header[AName];
+end;
+
+procedure TCrossSocketRawRequest.PopulateHeaders(ADest: TStrings);
+var
+  NV: TNameValue;
+begin
+  { Consumer (THorseCoreParamHeader.GetHeadersList) sets ADest.NameValueSeparator
+    before calling — ':' on Delphi, '=' on FPC — so honour it here. }
+  for NV in FCrossReq.Header do
+    ADest.Add(NV.Name + ADest.NameValueSeparator + NV.Value);
 end;
 
 procedure TCrossSocketRawRequest.PopulateQueryFields(ADest: TStrings);

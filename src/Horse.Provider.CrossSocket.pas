@@ -141,6 +141,10 @@ type
     // on sibling/parent classes are separate storage locations; sharing one would
     // cause silent port-not-changing bugs when both providers are compiled.
     class var FPort: Integer;
+    // Bind host set by the Listen overload family (upstream 2026-07 sync).
+    // '' or '0.0.0.0' = all interfaces; anything else is passed to
+    // THorseCrossSocketServer.Start as the CrossSocket Addr.
+    class var FHost: string;
     // Manual-reset event used to block the main thread in Listen (console apps).
     // Created signalled=False; SetEvent is called by Stop/StopListen to unblock.
     class var FStopEvent: TEvent;
@@ -176,8 +180,13 @@ type
 
     // ── Non-virtual convenience overloads ─────────────────────────────────
 
-    // Convenience: sets THorse.Port then calls Listen.
-    class procedure Listen(APort: Integer); reintroduce; overload;
+    // Listen overload family — signatures mirror the Console provider.
+    // Required since the 2026-07 upstream sync: Horse.Instance
+    // (THorseInstance.Listen) calls the 4-argument form directly.
+    class procedure Listen(const APort: Integer; const AHost: string = '0.0.0.0'; const ACallbackListen: TProc = nil; const ACallbackStopListen: TProc = nil); reintroduce; overload; static;
+    class procedure Listen(const APort: Integer; const ACallbackListen: TProc; const ACallbackStopListen: TProc = nil); reintroduce; overload; static;
+    class procedure Listen(const AHost: string; const ACallbackListen: TProc = nil; const ACallbackStopListen: TProc = nil); reintroduce; overload; static;
+    class procedure Listen(const ACallbackListen: TProc; const ACallbackStopListen: TProc = nil); reintroduce; overload; static;
 
     // Direct stop — called by StopListen; also available to external code.
     class procedure Stop;
@@ -228,10 +237,36 @@ begin
   ListenWithConfig(LPort, THorseCrossSocketConfig.Default);
 end;
 
-// ── Convenience overload: Listen(APort) ──────────────────────────────────────
-class procedure THorseProviderCrossSocket.Listen(APort: Integer);
+// ── Listen overload family ────────────────────────────────────────────────────
+// Master overload: stores host + lifecycle callbacks, then starts with the
+// default config. DoOnListen (fired inside ListenWithConfig) invokes the
+// just-set ACallbackListen; DoOnStopListen fires from StopListen.
+class procedure THorseProviderCrossSocket.Listen(const APort: Integer; const AHost: string; const ACallbackListen, ACallbackStopListen: TProc);
 begin
+  FHost := AHost;
+  SetOnListen(ACallbackListen);
+  SetOnStopListen(ACallbackStopListen);
   ListenWithConfig(APort, THorseCrossSocketConfig.Default);
+end;
+
+class procedure THorseProviderCrossSocket.Listen(const APort: Integer; const ACallbackListen, ACallbackStopListen: TProc);
+begin
+  Listen(APort, FHost, ACallbackListen, ACallbackStopListen);
+end;
+
+class procedure THorseProviderCrossSocket.Listen(const AHost: string; const ACallbackListen, ACallbackStopListen: TProc);
+var
+  LPort: Integer;
+begin
+  LPort := FPort;
+  if LPort <= 0 then
+    LPort := DEFAULT_PORT;
+  Listen(LPort, AHost, ACallbackListen, ACallbackStopListen);
+end;
+
+class procedure THorseProviderCrossSocket.Listen(const ACallbackListen, ACallbackStopListen: TProc);
+begin
+  Listen(FHost, ACallbackListen, ACallbackStopListen);
 end;
 
 // ── ListenWithConfig ─────────────────────────────────────────────────────────
@@ -262,7 +297,7 @@ begin
   // the Abstract patch removed it.
   FPort := APort;
 
-  FServer.Start(APort);
+  FServer.Start(APort, FHost);
   DoOnListen;
 
   // Block the main thread when running as a console application so the
