@@ -1,4 +1,4 @@
-﻿unit Horse.Provider.CrossSocket.RawRequest;
+unit Horse.Provider.CrossSocket.RawRequest;
 
 {
   CrossSocket IHorseRawRequest implementation
@@ -107,7 +107,13 @@ end;
 
 function TCrossSocketRawRequest.GetHost: string;
 begin
-  Result := FCrossReq.HostName;
+  { HOST-PORT-1 — return the raw Host header (host[:port]), matching Indy's
+    TWebRequest.Host. CrossSocket's HostName drops the port, so Req.RawWebRequest.Host
+    lost the ':9010' that the client sent (broke host-with-port round-trips).
+    Fall back to the parsed HostName when no Host header is present (HTTP/1.0). }
+  Result := FCrossReq.Header['Host'];
+  if Result = '' then
+    Result := FCrossReq.HostName;
 end;
 
 function TCrossSocketRawRequest.GetRemoteAddr: string;

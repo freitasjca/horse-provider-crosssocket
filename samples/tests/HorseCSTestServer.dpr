@@ -38,6 +38,9 @@
     POST   /echo/body-twice             calls Req.Body twice — verifies FBodyString cache (PATCH-REQ-9)
     GET    /compat/rawbody              writes RawWebResponse.Content then Res.Send — shadow wins (COMPAT-1)
     POST   /pool/burst                  body echo under load — worker pool cascade wake test
+    GET    /stream/pull                 chunked streaming via Res.SendChunked — pull model (PATCH-STREAM-1)
+    GET    /stream/content-type         SendChunked Content-Type propagation probe (PATCH-STREAM-1)
+    GET    /stream/empty                zero-chunk producer edge case — 200 + empty body (PATCH-STREAM-1)
 }
 
 uses
@@ -46,6 +49,7 @@ uses
   Web.HTTPApp,
   Horse,
   Horse.Commons,
+  Horse.Response,
 {$IFDEF HORSE_CROSSSOCKET}
   Horse.Provider.CrossSocket,
   Horse.Provider.CrossSocket.WorkerPool,
@@ -413,6 +417,75 @@ begin
       // The Horse shadow-field API must take precedence
       Res.ContentType('text/plain; charset=utf-8')
          .Send('shadow-wins');
+    end
+  );
+
+  // ── PATCH-STREAM-1: pull-model chunked streaming ──────────────────────────────
+  // Res.SendChunked returns immediately; CrossSocket IO threads pump the
+  // producer (5 chunks, ~120 ms apart) and the provider defers pool release
+  // until the stream drains ([STREAM-2]).
+  // On the Indy transport (no HORSE_CROSSSOCKET) this route responds 501 —
+  // "streaming not supported" — which is the intended negative behaviour.
+  // Manual incremental check:  curl -N http://127.0.0.1:9010/stream/pull
+  THorse.Get('/stream/pull',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      // [STREAM-WRITER-1] Phase 2: retargeted from the retired pull SendChunked to
+      // upstream's push Res.SendStream. The callback runs synchronously; the writer
+      // frames chunks and blocks each SendBytes until drained.
+      Res.ContentType('text/plain; charset=utf-8');
+      Res.SendStream(
+        procedure(const AWriter: IHorseStreamWriter)
+        var
+          LCount: Integer;
+        begin
+          for LCount := 0 to 4 do
+          begin
+            if not AWriter.IsConnected then Break;
+            Sleep(120); // spacing so incremental arrival is observable
+            AWriter.Write(Format('chunk-%d;', [LCount]));
+          end;
+        end);
+    end
+  );
+
+  // ── PATCH-STREAM-1 extras: Content-Type propagation ──────────────────────────────
+  // Streams 3 fast chunks with 'application/octet-stream' content type so the
+  // client can verify that the content-type passed to SendChunked reaches the
+  // wire Content-Type response header.  No Sleep — chunks are emitted without
+  // delay to keep the test fast.
+  THorse.Get('/stream/content-type',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('application/octet-stream');
+      Res.SendStream(
+        procedure(const AWriter: IHorseStreamWriter)
+        var
+          LCount: Integer;
+        begin
+          for LCount := 0 to 2 do
+          begin
+            if not AWriter.IsConnected then Break;
+            AWriter.Write(Format('ct-chunk-%d;', [LCount]));
+          end;
+        end);
+    end
+  );
+
+  // ── PATCH-STREAM-1 extras: zero-chunk producer (edge case) ────────────────────
+  // The producer returns False on the very first call — no data bytes emitted.
+  // CrossSocket must complete with 200 + empty body without hanging or crashing;
+  // the deferred pool release ([STREAM-2]) must still fire so the context is
+  // recycled (validated by the /ping health check in the client).
+  THorse.Get('/stream/empty',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('text/plain');
+      Res.SendStream(
+        procedure(const AWriter: IHorseStreamWriter)
+        begin
+          // no writes — upstream's Close still commits a complete (empty) response
+        end);
     end
   );
 

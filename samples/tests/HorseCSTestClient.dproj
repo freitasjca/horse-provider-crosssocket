@@ -3,7 +3,7 @@
         <ProjectGuid>{13EA3A82-262E-4163-8087-04456C09BBFF}</ProjectGuid>
         <MainSource>HorseCSTestClient.dpr</MainSource>
         <Base>True</Base>
-        <Config Condition="'$(Config)'==''">Debug</Config>
+        <Config Condition="'$(Config)'==''">Release</Config>
         <ProjectName Condition="'$(ProjectName)'==''">HorseCSTestClient</ProjectName>
         <TargetedPlatforms>168065</TargetedPlatforms>
         <AppType>Console</AppType>

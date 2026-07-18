@@ -3,7 +3,7 @@
         <ProjectGuid>{29198A68-5F4C-4049-BD82-A44BEC3AAC50}</ProjectGuid>
         <MainSource>HorseCSTestServer.dpr</MainSource>
         <Base>True</Base>
-        <Config Condition="'$(Config)'==''">Debug</Config>
+        <Config Condition="'$(Config)'==''">Release</Config>
         <ProjectName Condition="'$(ProjectName)'==''">HorseCSTestServer</ProjectName>
         <TargetedPlatforms>168065</TargetedPlatforms>
         <AppType>Console</AppType>
@@ -32,6 +32,24 @@
     <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_1)'!=''">
         <Cfg_1>true</Cfg_1>
         <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='Android64' and '$(Cfg_1)'=='true') or '$(Cfg_1_Android64)'!=''">
+        <Cfg_1_Android64>true</Cfg_1_Android64>
+        <CfgParent>Cfg_1</CfgParent>
+        <Cfg_1>true</Cfg_1>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='OSX64' and '$(Cfg_1)'=='true') or '$(Cfg_1_OSX64)'!=''">
+        <Cfg_1_OSX64>true</Cfg_1_OSX64>
+        <CfgParent>Cfg_1</CfgParent>
+        <Cfg_1>true</Cfg_1>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='OSXARM64' and '$(Cfg_1)'=='true') or '$(Cfg_1_OSXARM64)'!=''">
+        <Cfg_1_OSXARM64>true</Cfg_1_OSXARM64>
+        <CfgParent>Cfg_1</CfgParent>
+        <Cfg_1>true</Cfg_1>
         <Base>true</Base>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Debug' or '$(Cfg_2)'!=''">
@@ -127,6 +145,15 @@
         <DCC_DebugInformation>0</DCC_DebugInformation>
         <DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
         <DCC_SymbolReferenceInfo>0</DCC_SymbolReferenceInfo>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_1_Android64)'!=''">
+        <BT_BuildType>Debug</BT_BuildType>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_1_OSX64)'!=''">
+        <BT_BuildType>Debug</BT_BuildType>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_1_OSXARM64)'!=''">
+        <BT_BuildType>Debug</BT_BuildType>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2)'!=''">
         <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>

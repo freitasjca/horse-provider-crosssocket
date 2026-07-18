@@ -38,6 +38,10 @@ type
   public
     constructor Create(const ACrossRes: ICrossHttpResponse);
 
+    { [STREAM-WRITER-1] Phase 2 — expose the wrapped ICrossHttpResponse so the
+      push stream writer can reach the connection for raw SendBytes. }
+    property CrossRes: ICrossHttpResponse read FCrossRes;
+
     { IHorseRawResponse }
     procedure SetCustomHeader(const AName, AValue: string);
   end;
