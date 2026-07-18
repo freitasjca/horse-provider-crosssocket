@@ -52,6 +52,17 @@
     32  GET    /compat/rawbody                → body = "shadow-wins" despite
                                                 RawWebResponse.Content being set first
                                                 (COMPAT-1 shadow-field-wins validation)
+    33  GET    /stream/pull                   → 200, body reassembled from 5 chunks
+                                                + /ping healthy after deferred release
+                                                (PATCH-STREAM-1 basic pull streaming)
+    34  GET    /stream/content-type           → 200, body = 3 ct-chunks, Content-Type
+                                                header = application/octet-stream
+                                                (PATCH-STREAM-1 content-type propagation)
+    35  GET    /stream/empty                  → 200, empty body, /ping still healthy
+                                                (PATCH-STREAM-1 zero-chunk edge case)
+    36  GET    /stream/pull  ×2 concurrent    → both 200, both complete bodies,
+                                                no cross-drain corruption, pool healthy
+                                                (PATCH-STREAM-1 deferred release isolation)
 *)
 
 uses
@@ -355,6 +366,10 @@ var
   LSeqAllOk:      Boolean;
   LSeqMarker:     string;
   J:              Integer;
+  // Test 36 — concurrent streaming (deferred pool release isolation)
+  LStreamBatch:   array[0..1] of TConcurrentEntry;
+  LStreamAllOk:   Boolean;
+  LStreamAllBody: Boolean;
 
   { Section header. Prints the elapsed wall-clock time since the previous
     Section call so a slow test stands out without having to compare
@@ -415,8 +430,26 @@ var
       end);
   end;
 
-begin
+  // ── Test 36 helper — fires one GET /stream/pull request asynchronously ─────────
+  // Nested procedure (not a plain anonymous procedure) so AIdx is a per-call
+  // value parameter; the anonymous callback captures its own copy, avoiding the
+  // shared-loop-variable problem described above FireOne.
+  procedure FireStream(const AIdx: Integer);
+  begin
+    AClient.DoRequest('GET', BASE_URL + '/stream/pull',
+      nil, TBytes(nil), nil, nil,
+      procedure(const AResp: ICrossHttpClientResponse)
+      begin
+        if AResp <> nil then
+        begin
+          LStreamBatch[AIdx].Status := AResp.StatusCode;
+          LStreamBatch[AIdx].Body   := StreamToStr(AResp.Content);
+        end;
+        LStreamBatch[AIdx].Event.SetEvent;
+      end);
+  end;
 
+begin
   // ── 01  Health check ─────────────────────────────────────────────────────────
   Section('01  GET /ping');
   DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
@@ -517,7 +550,6 @@ begin
   Check('status 200',                  R.StatusCode = 200,         IntToStr(R.StatusCode));
   Check('session echoed as "abc123"',  Pos('"abc123"', R.Body) > 0, R.Body);
   Check('user echoed as "tester"',     Pos('"tester"', R.Body) > 0, R.Body);
-
 
   // ── 12  Multipart file upload ────────────────────────────────────────────────
   Section('12  POST /upload  (multipart/form-data, file field)');
@@ -785,7 +817,6 @@ begin
   Check('RemoteAddr non-empty',
     Pos('"remoteAddrNonEmpty":true', R.Body) > 0, R.Body);
 
-
   // ── 26  OPTIONS /raw/cors  (Horse.CORS pre-flight pattern) ───────────────────
   // This is the exact shape Horse.CORS.pas uses:
   //   if Req.RawWebRequest.Method = 'OPTIONS' then ...
@@ -957,6 +988,106 @@ begin
     R.Body = 'shadow-wins', R.Body);
   Check('RawWebResponse stub value NOT present in body',
     Pos('raw-should-not-appear', R.Body) = 0, R.Body);
+
+  // ── 33  PATCH-STREAM-1: pull-model chunked streaming ─────────────────────────
+  // The route streams 5 chunks (~120 ms apart) via Res.SendChunked; the
+  // handler returns before the body is complete and the provider defers pool
+  // release to stream completion ([STREAM-2]).  TCrossHttpClient de-chunks
+  // transparently, so R.Body is the reassembled payload.  The follow-up /ping
+  // proves the deferred release recycled the context cleanly (no pool
+  // corruption after a streaming request).
+  // NOTE: on the Indy transport this route responds 501 (streaming not
+  // supported) — this test is CrossSocket-specific by design.
+  Section('33  GET /stream/pull  (PATCH-STREAM-1 chunked streaming, deferred release)');
+  DoSync(AClient, 'GET', BASE_URL + '/stream/pull', nil, nil, R);
+  Check('status 200',
+    R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('all 5 chunks reassembled in order',
+    R.Body = 'chunk-0;chunk-1;chunk-2;chunk-3;chunk-4;', R.Body);
+  DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
+  Check('pool healthy after streaming — /ping still returns pong',
+    (R.StatusCode = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.StatusCode, R.Body]));
+
+  // ── 34  PATCH-STREAM-1: Content-Type propagation in streaming response ─────────
+  // The handler calls Res.SendChunked('application/octet-stream', producer).
+  // Verifies that the AContentType argument reaches the wire Content-Type header
+  // (not overridden by a transport default) and that the 3 chunks are delivered
+  // in order.
+  Section('34  GET /stream/content-type  (SendChunked Content-Type header propagation)');
+  DoSync(AClient, 'GET', BASE_URL + '/stream/content-type', nil, nil, R);
+  Check('status 200',
+    R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('body reassembled: 3 ct-chunks in order',
+    R.Body = 'ct-chunk-0;ct-chunk-1;ct-chunk-2;', R.Body);
+  if Assigned(R.Response) then
+    Check('Content-Type = application/octet-stream',
+      Pos('application/octet-stream', R.Response.Header['Content-Type']) > 0,
+      R.Response.Header['Content-Type']);
+  DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
+  Check('pool healthy after content-type stream',
+    (R.StatusCode = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.StatusCode, R.Body]));
+
+  // ── 35  PATCH-STREAM-1: zero-chunk producer (empty stream edge case) ───────────
+  // The producer returns False immediately — no data chunks are emitted.
+  // CrossSocket must complete with 200 + empty body without hanging or crashing.
+  // The follow-up /ping validates that the deferred pool release ([STREAM-2])
+  // still fires for an empty stream, so the context is correctly recycled.
+  Section('35  GET /stream/empty  (zero-chunk producer — no crash, pool recycled)');
+  DoSync(AClient, 'GET', BASE_URL + '/stream/empty', nil, nil, R);
+  Check('status 200',
+    R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('body is empty (no chunks emitted)',
+    R.Body = '', R.Body);
+  DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
+  Check('pool healthy after empty stream — /ping returns pong',
+    (R.StatusCode = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.StatusCode, R.Body]));
+
+  // ── 36  PATCH-STREAM-1: concurrent streaming — deferred pool release isolation ──
+  // Fires 2 simultaneous GET /stream/pull requests.  Both handlers return before
+  // their streams drain; the provider must defer pool release for each context
+  // independently ([STREAM-2]) so the two draining streams cannot corrupt each
+  // other's pool context.  Each body must equal the full 5-chunk sequence; any
+  // truncation, duplication, or mixing indicates a deferred-release bug.
+  Section('36  GET /stream/pull  ×2 concurrent  (deferred pool release isolation)');
+
+  for I := 0 to 1 do
+  begin
+    LStreamBatch[I].Marker := '';   // not used — Event and Body are what matters
+    LStreamBatch[I].Event  := TEvent.Create(nil, True, False, '');
+    LStreamBatch[I].Status := 0;
+    LStreamBatch[I].Body   := '';
+  end;
+
+  // Fire both before waiting for either — FireStream is the closure factory that
+  // captures each independent AIdx copy (same pattern as FireOne/FireBurst).
+  for I := 0 to 1 do
+    FireStream(I);
+
+  for I := 0 to 1 do
+    LStreamBatch[I].Event.WaitFor(TIMEOUT_MS);
+
+  LStreamAllOk   := True;
+  LStreamAllBody := True;
+  for I := 0 to 1 do
+  begin
+    if LStreamBatch[I].Status <> 200 then
+      LStreamAllOk := False;
+    if LStreamBatch[I].Body <> 'chunk-0;chunk-1;chunk-2;chunk-3;chunk-4;' then
+      LStreamAllBody := False;
+    LStreamBatch[I].Event.Free;
+  end;
+  Check('both concurrent streaming responses: status 200',
+    LStreamAllOk, '');
+  Check('both bodies complete and in order (no cross-drain corruption)',
+    LStreamAllBody, '');
+  DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
+  Check('pool healthy after concurrent streaming',
+    (R.StatusCode = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.StatusCode, R.Body]));
+
 end;
 
 // ── Entry point ───────────────────────────────────────────────────────────────

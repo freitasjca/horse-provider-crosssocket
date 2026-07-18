@@ -1,4 +1,4 @@
-﻿unit Horse.Provider.CrossSocket.Response;
+unit Horse.Provider.CrossSocket.Response;
 
 {$IF DEFINED(FPC)}{$MODE DELPHI}{$H+}{$ENDIF}
 
@@ -95,7 +95,7 @@
     property  BodyText:       string             (FCSBody shadow field)
     property  ContentStream:  TStream            (FCSContentStream shadow field)
     property  CSContentType:  string             (FCSContentType shadow field)
-    property  CustomHeaders: TList<TPair<string,string>>  (PATCH-RES-3)
+    property  CustomHeaders: TStringList  (PATCH-RES-3, FIX-HEADER-DUP)
 }
 
 interface
@@ -244,32 +244,54 @@ class procedure TResponseBridge.CopyHeaders(
   end;
 
 var
-  {$IF NOT DEFINED(FPC)}
-  Pair:      TPair<string, string>;
-  {$ENDIF}
   LRawRes:   {$IF DEFINED(FPC)}TResponse{$ELSE}TWebResponse{$ENDIF};
   I:         Integer;
   LName:     string;
   LValue:    string;
   LCookie:   THorseCookie;
+  {$IFNDEF FPC}
+  LPair:     TPair<string, string>;
+  {$ENDIF}
 begin
   // 1. Copy headers from THorseResponse.CustomHeaders (PATCH-RES-1/3)
   //    Written by Res.AddHeader — the normal Horse API path.
-  //    Delphi: CustomHeaders is TDictionary<string,string> — iterate TPair.
-  //    FPC:    CustomHeaders is TStringList — iterate by index via Names/ValueFromIndex.
+  //    MERGE-COMPAT (2026-07-18): merged HashLoad/horse types CustomHeaders as
+  //    TStringList on FPC but TDictionary<string,string> on Delphi — so the
+  //    Names[I]/ValueFromIndex[I] path only exists on FPC. Split per compiler
+  //    (was E2003 'Names' undeclared building the provider against merged horse).
   if AHorseRes.CustomHeaders <> nil then
-  {$IF NOT DEFINED(FPC)}
-    for Pair in AHorseRes.CustomHeaders do
-      EmitHeader(Pair.Key, Pair.Value);
-  {$ELSE}
+  begin
+    {$IF DEFINED(FPC)}
     for I := 0 to AHorseRes.CustomHeaders.Count - 1 do
     begin
       LName  := AHorseRes.CustomHeaders.Names[I];
       LValue := AHorseRes.CustomHeaders.ValueFromIndex[I];
+      { REPEATHDR-1 — skip Set-Cookie here; this shadow store collapses repeats.
+        Every occurrence is emitted from RepeatHeaders below instead. }
+      if (LName <> '') and not SameText(LName, 'Set-Cookie') then
+        EmitHeader(LName, LValue);
+    end;
+    {$ELSE}
+    for LPair in AHorseRes.CustomHeaders do
+      if (LPair.Key <> '') and not SameText(LPair.Key, 'Set-Cookie') then
+        EmitHeader(LPair.Key, LPair.Value);
+    {$ENDIF}
+  end;
+
+  // 1b. REPEATHDR-1 — Set-Cookie added via Res.AddHeader collapses in the shadow
+  //     CustomHeaders (TDictionary on Delphi keeps only the last value — only
+  //     user=tester survived, session=abc123 was lost). It is skipped above and
+  //     emitted here from the duplicate-preserving RepeatHeaders store: one
+  //     Set-Cookie line per cookie (RFC 6265 §3, via EmitHeader's Header.Add(dup)).
+  //     RepeatHeaders stores 'Name=Value' and is a TStringList on both compilers.
+  if Assigned(AHorseRes.RepeatHeaders) then
+    for I := 0 to AHorseRes.RepeatHeaders.Count - 1 do
+    begin
+      LName  := AHorseRes.RepeatHeaders.Names[I];
+      LValue := AHorseRes.RepeatHeaders.ValueFromIndex[I];
       if LName <> '' then
         EmitHeader(LName, LValue);
     end;
-  {$ENDIF}
 
   // 2. PATCH-RES-6 — Copy headers from the RawWebResponse adapter.
   //    Middleware that calls Res.RawWebResponse.SetCustomHeader (e.g. Horse.CORS)

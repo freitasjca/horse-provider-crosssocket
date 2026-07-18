@@ -1,6 +1,12 @@
 ﻿unit Horse.Provider.CrossSocket;
 
-{$IF DEFINED(FPC)}{$MODE DELPHI}{$H+}{$ENDIF}
+{$IF DEFINED(FPC)}
+{$MODE DELPHI}{$H+}
+{ FPC-STREAM-1: enables reference-to-procedure closures for TryDeferCompletion
+  (capturing Ctx/FServer) and mirrors CrossSocket's own zLib.inc settings. }
+{$MODESWITCH FUNCTIONREFERENCES}
+{$MODESWITCH ANONYMOUSFUNCTIONS}
+{$ENDIF}
 
 {
   Horse CrossSocket Provider  (hardened)
@@ -121,6 +127,7 @@ uses
 {$ENDIF}
   //Horse,
   Horse.Exception,
+  Horse.Proc,
   Horse.Provider.Abstract,
   Net.CrossHttpServer,
   Net.CrossHttpParams,
@@ -208,7 +215,9 @@ uses
   // DEFAULT_PORT = 9000 — matches the Console provider fallback
   Horse.Constants,
   // [BUG-2] EHorseCallbackInterrupted — the normal pipeline-end signal
-  Horse.Exception.Interrupted;
+  Horse.Exception.Interrupted,
+  // [STREAM-2] per-request streaming engine (PATCH-STREAM-1 reference impl)
+  Horse.Provider.CrossSocket.StreamWriter;
 
 { THorseProviderCrossSocket }
 
@@ -280,6 +289,11 @@ begin
     Stop;
 
   THorseWorkerPool.Initialize;
+
+  // [STREAM-WRITER-1] Register the CrossSocket push stream-writer factory.
+  // Runtime (not initialization) so it wins last over the merge's default
+  // WebBroker factory registered in Horse.Response's initialization.
+  RegisterCrossSocketStreamWriter;
 
   FServer := THorseCrossSocketServer.Create(AConfig);
 
@@ -364,7 +378,10 @@ var
   // [FIX-CS-4b] local to avoid passing a function-call rvalue to Assigned(var)
   WorkerPool:   THorseWorkerPool;
   Banner:       string;
+  // [STREAM-2] True once the streaming writer owns pool release/drain accounting
+  LDeferred:    Boolean;
 begin
+  LDeferred := False;
   // [SEC-30] Track this request for graceful-drain accounting
   if Assigned(FServer) then
     FServer.IncrementActive;
@@ -406,6 +423,11 @@ begin
       Ctx.Response.SetCSRawWebResponse(
         TCrossSocketWebResponse.Create(ACrossRes));
 
+      // [STREAM-WRITER-1] Phase 2: push streaming is engaged by upstream's
+      // Res.SendStream via the registered TCrossSocketStreamWriter factory
+      // (no per-request engine object to create here — the old pull
+      // TCrossSocketResponseStream + SetStream handshake is retired).
+
       // ── Horse pipeline ────────────────────────────────────────────────────
       try
         // [FIX-CS-3 / PATCH-ABS-3] THorse.Execute(Req, Res) runs the pipeline.
@@ -441,16 +463,45 @@ begin
         end;
       end;
 
-      // [Config] Pass ServerBanner so the Server: header reflects the config
-      TResponseBridge.Flush(Ctx.Response, ACrossRes, Banner);
+      // [STREAM-WRITER-1] Phase 2 push streaming: if the handler called
+      // Res.SendStream, TCrossSocketStreamWriter drove the response via
+      // CrossSocket's async SendNoCompress and may STILL BE DRAINING on IO
+      // threads. Two things:
+      //   (a) Skip the one-shot Flush — the stream owns the response.
+      //   (b) [STREAM-2] DEFER pool release + drain accounting to the writer's
+      //       completion. The pooled context and its CrossSocket response
+      //       adapter MUST stay alive until the send finishes: releasing inline
+      //       frees the adapter mid-send and wedges the connection's keep-alive
+      //       (the /ping after a stream times out). Claim the writer that ran on
+      //       this thread; if it already drained (race) TryDeferCompletion
+      //       returns False and we fall through to the inline release in the
+      //       finally blocks — safe, because the send is done.
+      if Ctx.Response.IsStreaming then
+      begin
+        if TCrossSocketStreamWriter.TryDeferActive(
+             procedure
+             begin
+               THorseContextPool.Release(Ctx);
+               if Assigned(FServer) then
+                 FServer.DecrementActive;
+             end) then
+          LDeferred := True;
+      end
+      else
+        // [Config] Pass ServerBanner so the Server: header reflects the config
+        TResponseBridge.Flush(Ctx.Response, ACrossRes, Banner);
 
     finally
-      THorseContextPool.Release(Ctx);
+      // [STREAM-2] a deferred context is released by the stream, not here
+      if not LDeferred then
+        THorseContextPool.Release(Ctx);
     end;
 
   finally
-    // [SEC-30] Always decrement — even on validation reject or exception
-    if Assigned(FServer) then
+    // [SEC-30] Always decrement — even on validation reject or exception.
+    // [STREAM-2] Deferred: the stream is still in flight — the completion
+    // callback decrements, keeping graceful drain accurate for live streams.
+    if (not LDeferred) and Assigned(FServer) then
       FServer.DecrementActive;
   end;
 end;
