@@ -3,7 +3,7 @@
 Authoritative reference for the GitHub Actions workflow that keeps the
 `freitasjca/Delphi-Cross-Socket` fork automatically aligned with upstream
 `winddriver/Delphi-Cross-Socket`, while preserving the fork-only additions
-(CnPack subset, mTLS patches, boss.json, workflow self-files).
+(CnPack subset, `SetCipherList`, PATCH-CSHTTP-3, boss.json, workflow self-files).
 
 This document captures **what was prepared, why, and how to operate it**.
 It is the canonical source if anyone (future you, a successor maintainer)
@@ -19,25 +19,22 @@ needs to understand or modify the fork-sync system.
 `winddriver/Delphi-Cross-Socket` to carry features and fixes that hadn't
 landed upstream:
 
-| Fix tag | Status as of 2026-05-30 |
+| Fix tag | Status as of 2026-08-04 |
 |---|---|
 | `PATCH-IOCP-1` shutdown-cascade race | **Obsolete** — upstream fixed independently |
 | `PATCH-CSHTTP-1` zero-body parser hang | **Obsolete** — upstream `SetNoBody` mechanism is functionally equivalent and RFC 7230-correct |
 | `TCrossHttpClientConnection._OnBodyEnd` nil-guard | **Obsolete** — upstream line 2028 has the guard |
-| `MTLS-1/2` `SetCACertificate(File)` + `SetVerifyPeer(Boolean)` | **Still fork-only** — pending upstream PR |
+| `PATCH-CSHTTP-2` CL=0 hang | **Obsolete** — upstream commit `f543650e` implements the identical fix |
+| `MTLS-1/2` `AddCACertificate(File)` + `SetVerifyPeer(Boolean)` | **In upstream** winddriver ≥2026-08 (API renamed from `SetCACertificate`); included in fork v1.0.6 |
+| `TLSOPT-1` password-in-`SetPrivateKeyFile` | **In upstream** winddriver ≥2026-08; included in fork v1.0.6 |
+| `PATCH-CSHTTP-3` keep-alive retry | **Fork-only** — not in upstream winddriver; included in fork v1.0.6 |
+| `TLSOPT-2` `SetCipherList` | **Fork-only** — not in upstream winddriver; included in fork v1.0.6 |
 
-The only remaining fork-only delta is **mTLS**. Maintaining a hand-curated
-fork for two methods drifts continuously behind upstream — every upstream
-commit is a sync chore. The workflow automates that chore down to zero
-human involvement on the happy path.
+The remaining fork-only deltas are **`SetCipherList`** (TLS 1.2 cipher override) and **PATCH-CSHTTP-3** (keep-alive retry in `TCrossHttpClient`). mTLS and password-in-key are now in upstream. The workflow automates upstream sync down to zero human involvement on the happy path.
 
-### Why not just file the upstream PR and delete the fork
+### Why the fork still exists
 
-That is the eventual endgame. Until upstream merges mTLS, the fork must
-exist so current mTLS users have a `boss install`-friendly release
-(`v1.0.3`) to depend on. The workflow keeps the fork **as close to
-upstream as possible** during that interim — minimising the surface area
-where the fork can diverge silently.
+The fork remains necessary because `winddriver/Delphi-Cross-Socket` is not Boss-installable (no `boss.json`, CnPack dependency not Boss-resolvable). The fork vendors the CnPack subset and ships `SetCipherList` + PATCH-CSHTTP-3. A current stable release (`v1.0.6`) keeps the fork **as close to upstream as possible** — minimising the surface area where it can diverge silently.
 
 ### Operational philosophy
 
@@ -100,35 +97,42 @@ design rationale next to the patches. Documents:
   `cnvcl/Source` (resilient to upstream relocations) and fails loudly if the
   transitive closure is broken
 
-### `.sync/patches/Net.CrossSslSocket.Base.pas.patch` — 57 lines
+### `.sync/patches/Net.CrossSslSocket.Base.pas.patch` — fork-only additions
 
-Adds to `TCrossSslSocketBase`, mirroring the existing `SetCertificate`
-family:
+> **Note (2026-08-04):** mTLS (`AddCACertificate` family + `SetVerifyPeer`) and
+> password-in-`SetPrivateKeyFile` merged into upstream winddriver. The patches
+> below no longer track those — the workflow now only needs to preserve
+> `SetCipherList` (TLSOPT-2, fork-only). Update the `.sync/patches/` files
+> accordingly when regenerating.
 
-- `procedure SetCACertificate(const ACACertBuf: Pointer; const ACACertBufSize: Integer); overload; virtual; abstract;`
-- `procedure SetCACertificate(const ACACertBytes: TBytes); overload; virtual;`
-- `procedure SetCACertificate(const ACACertStr: string); overload; virtual;`
-- `procedure SetCACertificateFile(const ACACertFile: string); virtual;`
-- `procedure SetVerifyPeer(const AVerify: Boolean); virtual; abstract;`
+Current fork-only addition in `TCrossSslSocketBase`:
 
-Plus three helper-overload bodies that forward to the buffer overload.
+- `procedure SetCipherList(const ACipherList: string); virtual; abstract;`
 
-### `.sync/patches/Net.CrossSslSocket.OpenSSL.pas.patch` — 120 lines
+Historical additions now in upstream (no longer patched separately):
+- `AddCACertificate` overload family (renamed from `SetCACertificate` in upstream ≥2026-08)
+- `AddCACertificateFile`
+- `SetVerifyPeer(const AVerify: Boolean)`
+- `APassword` parameter on `SetPrivateKey` / `SetPrivateKeyFile` overloads
 
-Adds the concrete overrides to `TCrossOpenSslSocket`:
+### `.sync/patches/Net.CrossSslSocket.OpenSSL.pas.patch` — fork-only additions
 
-- `SetCACertificate(buf, size)` → `BIO_new_mem_buf` +
-  `PEM_read_bio_X509` + `SSL_CTX_add_client_CA` +
-  `X509_STORE_add_cert`
+Current fork-only concrete override in `TCrossOpenSslSocket`:
+
+- `SetCipherList(ACipherList)` → `SSL_CTX_set_cipher_list(FSslCtx, PAnsiChar(LAnsi))`;
+  raises `ESsl` if the cipher string is rejected
+
+Historical additions now in upstream (no longer patched separately):
+- `AddCACertificate(buf, size)` → `BIO_new_mem_buf` + `PEM_read_bio_X509` +
+  `SSL_CTX_add_client_CA` + `X509_STORE_add_cert`
 - `SetVerifyPeer(Boolean)` →
-  `SSL_CTX_set_verify(SSL_VERIFY_PEER or SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nil)`
-  vs `SSL_VERIFY_NONE`
-- A docstring banner tagging the additions as `MTLS-1` and `MTLS-2`
+  `SSL_CTX_set_verify(SSL_VERIFY_PEER or SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nil)` vs `SSL_VERIFY_NONE`
+- Password as direct parameter on `SetPrivateKey(buf, size, password)`
 
-Both patches were generated with `diff -u` against
-`winddriver/Delphi-Cross-Socket@master` as it stood on 2026-05-30 and
-verified to apply cleanly via `git apply --check` (round-trip
-byte-identical to the fork's current patched state).
+The original patches were generated with `diff -u` against
+`winddriver/Delphi-Cross-Socket@master` as it stood on 2026-05-30.
+When regenerating after upstream merges, generate against the current
+upstream HEAD using the same `diff -u` procedure in `.sync/README.md`.
 
 ---
 
@@ -250,9 +254,8 @@ The auto-created issue body contains the full recovery runbook:
 
 1. Local clone + reset to upstream
 2. Restore fork-only files from previous fork tip
-3. **Manually graft** the mTLS additions (SetCACertificate family +
-   SetVerifyPeer) into the new upstream files — `.sync/README.md`
-   documents each method signature
+3. **Manually graft** the fork-only additions (`SetCipherList` in Base.pas + OpenSSL.pas)
+   into the new upstream files — `.sync/README.md` documents each method signature
 4. **Regenerate the patch files** from a clean baseline using `diff -u`
 5. Commit, push, re-run workflow
 
@@ -282,14 +285,17 @@ The exact commands are embedded in the issue body — copy-paste runnable.
 
 ---
 
-## 7. End-state when upstream merges the mTLS PR
+## 7. End-state when upstream merges the remaining fork-only additions
 
-When the upstream PR for `SetCACertificate(File)` + `SetVerifyPeer(Boolean)`
-lands in `winddriver/Delphi-Cross-Socket`, the fork's last reason to
-exist disappears. Procedure for retirement:
+> **2026-08-04 update:** mTLS (`AddCACertificate` / `SetVerifyPeer`) and
+> password-in-key have already merged into upstream winddriver. The two
+> remaining fork-only additions are `SetCipherList` (TLSOPT-2) and
+> PATCH-CSHTTP-3 (keep-alive retry in `TCrossHttpClient`).
 
-1. Confirm the upstream PR landed and the mTLS methods are present on
-   `winddriver/Delphi-Cross-Socket@master`.
+When `SetCipherList` and PATCH-CSHTTP-3 land in upstream, the fork's
+last reason to exist disappears. Procedure for retirement:
+
+1. Confirm both additions are present on `winddriver/Delphi-Cross-Socket@master`.
 2. Delete `.sync/patches/Net.CrossSslSocket.Base.pas.patch` and
    `Net.CrossSslSocket.OpenSSL.pas.patch` from the fork.
 3. Run the workflow once with `force_resync: true` — the fork will now be
@@ -307,7 +313,7 @@ defence-in-depth against accidental drift even during the transition.
 ## 8. Cross-references
 
 - [Provider README installation paths](../README.md) — Path A
-  (upstream + manual CnPack) vs Path B (fork v1.0.3 for mTLS users)
+  (upstream + manual CnPack) vs Path B (fork v1.0.6 for `SetCipherList` + PATCH-CSHTTP-3)
 - [`patches/horse/doc/providers.md`](../../horse/doc/providers.md) —
   current default-install guidance in the user-facing Horse docs
 - [`Net.CrossSslSocket.Base.pas`](../../Delphi-Cross-Socket/Net/Net.CrossSslSocket.Base.pas)
