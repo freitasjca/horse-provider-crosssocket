@@ -24,15 +24,20 @@
     procedure SetPrivateKey(const APKeyStr: string)    overload
     property Ssl: Boolean  (read-only)
 
-    ── mTLS (Net.CrossSslSocket.Base patch + Net.CrossSslSocket.OpenSSL impl) ─
-    procedure SetCACertificateFile(const ACACertFile: string)
+    ── mTLS / TLS options (upstream winddriver API ≥ 2026-08) ─────────────────
+    procedure AddCACertificateFile(const AFileName: string)
       → loads CA cert, calls SSL_CTX_add_client_CA + X509_STORE_add_cert
     procedure SetVerifyPeer(const AVerify: Boolean)
       → SSL_CTX_set_verify(PEER|FAIL_IF_NO_PEER_CERT) / VERIFY_NONE
+    procedure SetPrivateKeyFile(const APKeyFile: string; const APassword: string = '')
+      → password is now a direct parameter (upstream removed SetPrivateKeyPassword)
     Concrete implementations in TCrossOpenSslSocket call:
-      SetCACertificate → SSL_CTX_add_client_CA + X509_STORE_add_cert
+      AddCACertificate → SSL_CTX_add_client_CA + X509_STORE_add_cert
       SetVerifyPeer    → SSL_CTX_set_verify(SSL_VERIFY_PEER
                            or SSL_VERIFY_FAIL_IF_NO_PEER_CERT) / SSL_VERIFY_NONE
+    ── TLSOPT-2 (fork-only, not in upstream winddriver) ────────────────────────
+    procedure SetCipherList(const ACipherList: string)
+      → SSL_CTX_set_cipher_list (TLS 1.2 cipher override; freitasjca fork only)
 
   TCrossServer (Net.CrossServer.pas):
     procedure Start(const ACallback: TCrossListenCallback = nil)
@@ -58,13 +63,13 @@
     SSLEnabled       → TCrossHttpServer constructor argument
     SSLCertFile      → FServer.SetCertificateFile
     SSLKeyFile       → FServer.SetPrivateKeyFile
-    SSLCACertFile    → FServer.SetCACertificateFile     (mTLS)
-    SSLVerifyPeer    → FServer.SetVerifyPeer             (mTLS)
-    SSLKeyPassword   → FServer.SetPrivateKeyPassword     (TLSOPT-1, before key)
-    SSLCipherList    → FServer.SetCipherList             (TLSOPT-2)
+    SSLCACertFile    → FServer.AddCACertificateFile     (mTLS; upstream API)
+    SSLVerifyPeer    → FServer.SetVerifyPeer             (mTLS; upstream API)
+    SSLKeyPassword   → passed as APassword to SetPrivateKeyFile (upstream API)
+    SSLCipherList    → FServer.SetCipherList             (TLSOPT-2; fork-only)
 
-  TLSOPT-1/2 are additive patches to Delphi-Cross-Socket (Net.CrossSslSocket.Base
-  + .OpenSSL), alongside the mTLS patches — apply both, or use the fork release.
+  SetCipherList is not in upstream winddriver/Delphi-Cross-Socket — use the
+  freitasjca fork (≥1.0.6) or apply patches/Delphi-Cross-Socket/ manually.
 
   Reserved (CrossSocket API not available):
     KeepAliveTimeout — no matching property confirmed in TCrossHttpServer
@@ -272,31 +277,23 @@ begin
     if FConfig.SSLCertFile <> '' then
       FServer.SetCertificateFile(FConfig.SSLCertFile);
 
-    // ── [TLSOPT-1] Passphrase for an encrypted private key ────────────────
-    // Must be set BEFORE SetPrivateKeyFile so the key is parsed with the
-    // passphrase available (TCrossOpenSslSocket.SetPrivateKey reads it via the
-    // OpenSSL PEM password callback). Empty → unchanged unencrypted-key path.
-    if FConfig.SSLKeyPassword <> '' then
-      FServer.SetPrivateKeyPassword(FConfig.SSLKeyPassword);
-
+    // ── [TLSOPT-1] Private key with optional passphrase ──────────────────
+    // Upstream winddriver API (≥2026-08): password is a direct parameter on
+    // SetPrivateKeyFile / SetPrivateKey — no separate SetPrivateKeyPassword call.
+    // Empty APassword = '' leaves the unencrypted-key path unchanged.
     if FConfig.SSLKeyFile <> '' then
-      FServer.SetPrivateKeyFile(FConfig.SSLKeyFile);
+      FServer.SetPrivateKeyFile(FConfig.SSLKeyFile, FConfig.SSLKeyPassword);
 
     // ── [MTLS-1] CA certificate for client-certificate verification ───────
-    // SetCACertificateFile is implemented in TCrossOpenSslSocket (see
-    // Net.CrossSslSocket.OpenSSL.pas — mTLS patch).  Must be called BEFORE
-    // SetVerifyPeer so the X509_STORE is populated before verify mode is set.
-    // SetCACertificateFile is the new method added to TCrossSslSocketBase
-
-
-    // (Net.CrossSslSocket.Base patch).  The concrete implementation in
-    // TCrossOpenSslSocket calls:
+    // Upstream winddriver API (≥2026-08): AddCACertificateFile (additive, not
+    // SetCACertificateFile).  Must be called BEFORE SetVerifyPeer so the
+    // X509_STORE is populated before verify mode is set.
+    // TCrossOpenSslSocket.AddCACertificate calls:
     //   SSL_CTX_add_client_CA(FContext, LCACert)   — advertises CA in TLS hello
     //   X509_STORE_add_cert(SSL_CTX_get_cert_store(FContext), LCACert)
     //                                               — enables chain verification
-    // Must be called BEFORE SetVerifyPeer so the store is populated first.
     if FConfig.SSLCACertFile <> '' then
-      FServer.SetCACertificateFile(FConfig.SSLCACertFile);
+      FServer.AddCACertificateFile(FConfig.SSLCACertFile);
 
     // ── [MTLS-2] Enable/disable client-certificate verification ──────────
     // SetVerifyPeer is the new method added to TCrossSslSocketBase.
