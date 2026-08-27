@@ -51,6 +51,23 @@ const
   // does not use this unit.)
   BENCH_PORT_RAW_ICS          = 9010;
 
+  { ── HTTP/2 and epoll providers (Linux-focused; see
+      plans/bench-plan-all-providers.md) ──────────────────────────────────
+
+    Placed at 9041+ rather than continuing 9011+, because of the offset
+    arithmetic: middleware is bare+10 and TLS is bare+30, so a bare port at
+    9021 would put its middleware variant on 9031 — which is already the TLS
+    port of Indy at 9001. This block leaves both offsets collision-free
+    (middleware 9051-9053, TLS 9071-9073).
+
+    nghttp2 is the only HTTP/2 server here. Comparing it to the HTTP/1.1
+    providers on a trivial route is NOT apples to apples — HTTP/2 pays for
+    framing, HPACK and per-stream state that HTTP/1.1 keep-alive does not.
+    See the plan's S1-vs-S4 split before drawing a conclusion from it. }
+  BENCH_PORT_NGHTTP2_BARE     = 9041;   // Horse + nghttp2 (h2c)
+  BENCH_PORT_RAW_NGHTTP2      = 9042;   // TNghttp2Server directly, no Horse
+  BENCH_PORT_EPOLL_BARE       = 9043;   // Horse + built-in epoll provider
+
   // TLS / HTTPS variants. The TLS-capable self-hosted providers (CrossSocket,
   // mORMot, ICS) re-listen on bare_port + BENCH_PORT_TLS_OFFSET when started with
   // --tls. Chosen to avoid the integration-test TLS ports (9101/9111/9201).
