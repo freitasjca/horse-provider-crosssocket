@@ -19,9 +19,9 @@
   TCrossSslSocketBase (Net.CrossSslSocket.Base.pas):
     constructor Create(const AIoThreads: Integer; const ASsl: Boolean)
     procedure SetCertificateFile(const ACertFile: string)
-    procedure SetPrivateKeyFile(const APKeyFile: string)
+    procedure SetPrivateKeyFile(const APKeyFile: string; const APassword: string = '')
     procedure SetCertificate(const ACertStr: string)   overload
-    procedure SetPrivateKey(const APKeyStr: string)    overload
+    procedure SetPrivateKey(const APKeyStr: string; const APassword: string = '')    overload
     property Ssl: Boolean  (read-only)
 
     ── mTLS / TLS options (upstream winddriver API ≥ 2026-08) ─────────────────
@@ -29,8 +29,7 @@
       → loads CA cert, calls SSL_CTX_add_client_CA + X509_STORE_add_cert
     procedure SetVerifyPeer(const AVerify: Boolean)
       → SSL_CTX_set_verify(PEER|FAIL_IF_NO_PEER_CERT) / VERIFY_NONE
-    procedure SetPrivateKeyFile(const APKeyFile: string; const APassword: string = '')
-      → password is now a direct parameter (upstream removed SetPrivateKeyPassword)
+      (APassword='' leaves unencrypted-key path unchanged)
     Concrete implementations in TCrossOpenSslSocket call:
       AddCACertificate → SSL_CTX_add_client_CA + X509_STORE_add_cert
       SetVerifyPeer    → SSL_CTX_set_verify(SSL_VERIFY_PEER
@@ -269,8 +268,8 @@ begin
   //   procedure SetCertificateFile(const ACertFile: string)
   //     reads file bytes → calls abstract SetCertificate(Pointer, Integer)
   //     implemented by TCrossOpenSslSocket → SSL_CTX_use_certificate(FContext,…)
-  //   procedure SetPrivateKeyFile(const APKeyFile: string)
-  //     reads file bytes → calls abstract SetPrivateKey(Pointer, Integer)
+  //   procedure SetPrivateKeyFile(const APKeyFile: string; const APassword: string = '')
+  //     reads file bytes → calls abstract SetPrivateKey(Pointer, Integer, APassword)
   //     implemented by TCrossOpenSslSocket → SSL_CTX_use_PrivateKey(FContext,…)
   if FConfig.SSLEnabled then
   begin

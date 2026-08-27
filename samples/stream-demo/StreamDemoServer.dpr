@@ -1,4 +1,4 @@
-program StreamDemoServer;
+﻿program StreamDemoServer;
 
 // ============================================================================
 //  StreamDemoServer — CrossSocket TStream response diagnostics

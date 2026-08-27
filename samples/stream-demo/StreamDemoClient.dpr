@@ -1,4 +1,4 @@
-program StreamDemoClient;
+﻿program StreamDemoClient;
 
 // ============================================================================
 //  StreamDemoClient — hits StreamDemoServer's 7 diagnostic endpoints, records
