@@ -95,3 +95,5 @@ __recovery/
 samples/bench/results/
 *.log
 tests/temp/
+samples/bench/bin/
+samples/bench/bench-results-linux-*.md

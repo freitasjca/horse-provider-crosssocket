@@ -56,6 +56,12 @@ program HorseBenchFPCHttp;
 // No HORSE_PROVIDER_CROSSSOCKET — selects FPC's fphttpserver / HTTPApplication
 
 uses
+  // cthreads MUST be first, before any unit that can start a thread. Without
+  // it FPC links the single-threaded RTL and the server dies at startup with
+  // "Runtime error 232" — a bare number whose text ("This binary has no thread
+  // support compiled in") never reaches the console. The three bench servers
+  // that already had it are exactly the three that ran on 2026-08-27.
+  {$IFDEF UNIX} cthreads, {$ENDIF}
   SysUtils,
   StrUtils,
   Horse,
@@ -125,6 +131,30 @@ begin
   end;
 end;
 
+// FIX-BENCH-FPC-MW-1. This middleware used to be an inline anonymous
+// procedure. That compiles on Delphi and cannot compile here: FPC has no
+// anonymous procedures unless MODESWITCH FUNCTIONREFERENCES is on, and it is
+// not on for this program. On FPC, THorseCallbackProc is a PLAIN procedure
+// whose third parameter is TNextProc (a "procedure of object"), NOT TProc —
+// so both the shape and the parameter type were wrong.
+//
+// The compiler reported it as
+//   Incompatible type for arg no. 1: Got "anonymous procedure(...)",
+//   expected "Open Array Of THorseCallback"
+// which reads as a bad argument rather than as a missing language feature.
+// A unit-scope routine is the only form that works, and it is what Horse.CORS
+// and every other FPC-compatible Horse middleware uses.
+procedure HeadersBeforeMiddleware(AReq: THorseRequest; ARes: THorseResponse;
+  ANext: TNextProc);
+begin
+  ARes.AddHeader('X-Content-Type-Options', 'nosniff');
+  ARes.AddHeader('X-Frame-Options', 'DENY');
+  ARes.AddHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  ARes.AddHeader('Cache-Control', 'no-store');
+  ARes.AddHeader('Server', 'unknown');
+  ANext;
+end;
+
 begin
   GModeBoth      := HasSwitch('middleware');
   GModeGuard     := HasSwitch('guard-only');
@@ -141,16 +171,7 @@ begin
     THorse.Use(THorseSecurityHeaders.New);
 
   if GModeHdrBefore then
-    THorse.Use(
-      procedure(Req: THorseRequest; Res: THorseResponse; Next: TProc)
-      begin
-        Res.AddHeader('X-Content-Type-Options', 'nosniff');
-        Res.AddHeader('X-Frame-Options', 'DENY');
-        Res.AddHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-        Res.AddHeader('Cache-Control', 'no-store');
-        Res.AddHeader('Server', 'unknown');
-        Next;
-      end);
+    THorse.Use(HeadersBeforeMiddleware);
 
   if GModeBoth then
     GModeLabel := '+middleware (guard+headers)'

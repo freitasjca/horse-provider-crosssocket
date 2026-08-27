@@ -41,7 +41,12 @@ program HorseBenchRawFPCHttp;
 {$APPTYPE CONSOLE}
 
 uses
-  {$IFDEF UNIX} BaseUnix, {$ENDIF}
+  // cthreads MUST be first, before any unit that can start a thread. Without
+  // it FPC links the single-threaded RTL and the server dies at startup with
+  // "Runtime error 232" — a bare number whose text ("This binary has no thread
+  // support compiled in") never reaches the console. The three bench servers
+  // that already had it are exactly the three that ran on 2026-08-27.
+  {$IFDEF UNIX} cthreads, BaseUnix, {$ENDIF}
   SysUtils,
   Classes,
   httpdefs,        // TRequest / TResponse members (Method, PathInfo, Content, Code)

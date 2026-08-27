@@ -54,16 +54,34 @@ uses
   SysUtils, Classes,
   Nghttp2.Types,
   Nghttp2.Server,
-  Nghttp2.Engine.Epoll,          { linking this is what makes --eventloop work }
-  Horse.BenchRoutes in '../../../Common/Horse.BenchRoutes.pas';
+  Nghttp2.Engine.Epoll;          { linking this is what makes --eventloop work }
 
+{ Horse.BenchRoutes is deliberately NOT used here, even though it owns these
+  constants. It `uses Horse` — so importing it would link the entire framework
+  into the server whose whole purpose is to measure what the framework costs,
+  and under -dHORSE_PROVIDER_NGHTTP2 it also drags in Horse.Provider.Nghttp2
+  with its own initialization and class state, alongside the TNghttp2Server
+  this file creates directly.
+
+  Three integers are not worth any of that. They are duplicated here, and the
+  duplication is the point: this binary must link nothing Horse. Keep them in
+  step with Common/Horse.BenchRoutes.pas by hand. }
 const
-  BASE_PORT = BENCH_PORT_RAW_NGHTTP2;
+  BASE_PORT              = 9042;   // = BENCH_PORT_RAW_NGHTTP2
+  PAIRED_HORSE_PORT      = 9041;   // = BENCH_PORT_NGHTTP2_BARE
+  ALLOC_BODY_SIZE        = 1024;   // must equal BenchRoutes' value exactly, or
+                                   // /alloc compares two different payloads
 
 var
   GServer:  TNghttp2Server;
   GStop:    Boolean = False;
   GAllocBody: TBytes;
+  { Diagnostic. The first version of this server accepted connections,
+    negotiated h2c, and then never answered — with no exception and nothing in
+    the log. Reading the source could not distinguish "the handler never ran"
+    from "it ran and the response never reached the wire", and those have
+    completely different causes. One counter settles it. }
+  GHandlerCalls: Integer = 0;
 
 {$IFDEF UNIX}
 procedure HandleStopSignal(ASignal: cint); cdecl;
@@ -84,8 +102,32 @@ var
   LBody:   TBytes;
   LLen:    Integer;
 begin
+  { Trace BEFORE touching the stream. The previous probe sat after two
+    Header[] reads, so "handler never ran" and "handler raised on its first
+    statement" produced identical output — no line either way. }
+  Inc(GHandlerCalls);
+  if GHandlerCalls = 1 then
+  begin
+    WriteLn('  [handler] ENTERED');
+    Flush(Output);
+  end;
+
+  { try/except is not just diagnostics — it belongs here.
+
+    This runs inside a libnghttp2 C callback. An exception unwinding through
+    C is undefined behaviour at best; in practice it abandons the callback
+    chain, so the response is never submitted and the stream stays open
+    forever — a hung connection with no error anywhere, which is exactly the
+    symptom this server had. The Horse provider wraps its handler for the
+    same reason; a raw server has to do it itself. }
+  try
   LPath   := AStream.Header[':path'];
   LMethod := AStream.Header[':method'];
+  if GHandlerCalls = 1 then
+  begin
+    WriteLn('  [handler] method="', LMethod, '" path="', LPath, '"');
+    Flush(Output);
+  end;
 
   if (LMethod = 'GET') and (LPath = '/ping') then
   begin
@@ -128,6 +170,21 @@ begin
   AStream.StatusCode := 404;
   AStream.Header['content-type'] := 'text/plain';
   AStream.Send(TEncoding.UTF8.GetBytes('not found'));
+  except
+    on E: Exception do
+    begin
+      WriteLn('  [handler] EXCEPTION ', E.ClassName, ': ', E.Message);
+      Flush(Output);
+      // Answer anyway. A stream left unanswered hangs the client with no
+      // diagnosis; a 500 at least terminates it and names the failure.
+      try
+        AStream.StatusCode := 500;
+        AStream.Send(TEncoding.UTF8.GetBytes('handler error'));
+      except
+        // Nothing more can be done for this stream.
+      end;
+    end;
+  end;
 end;
 
 function TrimSwitches(const S: string): string;
@@ -184,11 +241,17 @@ begin
   LConfig      := THorseNghttp2Config.Default;
   LConfig.Port := BASE_PORT;
 
-  { Match whatever the Horse-wrapped server is running, or the floor
-    measurement compares two different dispatch models and attributes the
-    difference to the framework. }
-  LConfig.WorkerThreads  := LWorkers;
-  LConfig.AsyncDispatch  := LWorkers > 0;
+  { INLINE, always. AsyncDispatch tells the session to defer responses to a
+    queue for a worker pool to feed — but a pool is something the Horse
+    provider builds, not something TNghttp2Server owns, so there is no pool
+    here to feed it. Requesting async dispatch in a server that cannot
+    dispatch is asking for a stall.
+
+    It also makes the floor measurement honest: pair this with the wrapped
+    server's --inline mode and the ONLY difference between the two is Horse.
+    --workers is still accepted so the invocation matches, and ignored. }
+  LConfig.WorkerThreads  := 0;
+  LConfig.AsyncDispatch  := False;
   LConfig.UseEventLoop   := HasSwitch('eventloop');
 
   GServer := TNghttp2Server.Create;
@@ -198,13 +261,13 @@ begin
 
     WriteLn('HorseBenchRawNghttp2  port=', BASE_PORT,
             '  protocol=HTTP/2 (h2c)  framework=NONE');
+    WriteLn('  dispatch=INLINE on the connection thread (no pool exists here)');
     if LWorkers > 0 then
-      WriteLn('  dispatch=pool workers=', LWorkers, ' (pinned)')
-    else
-      WriteLn('  dispatch=INLINE on the connection thread');
+      WriteLn('  note: --workers=', LWorkers, ' accepted and IGNORED — see source');
     WriteLn('  driver requested=', LConfig.UseEventLoop,
             '  resolved eventloop=', GServer.UsingEventLoop);
-    WriteLn('Pair with: HorseBenchNghttp2 on ', BENCH_PORT_NGHTTP2_BARE,
+    WriteLn('  OnRequest assigned=', Assigned(GServer.OnRequest));
+    WriteLn('Pair with: HorseBenchNghttp2 on ', PAIRED_HORSE_PORT,
             ' — the delta is Horse''s per-request cost.');
     Flush(Output);
 
