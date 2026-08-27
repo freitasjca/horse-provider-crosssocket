@@ -34,7 +34,12 @@ program HorseBenchRawCrossSocket;
 {$APPTYPE CONSOLE}
 
 uses
-  {$IFDEF UNIX} BaseUnix, {$ENDIF}
+  // cthreads MUST be first, before any unit that can start a thread. Without
+  // it FPC links the single-threaded RTL and the server dies at startup with
+  // "Runtime error 232" — a bare number whose text ("This binary has no thread
+  // support compiled in") never reaches the console. The three bench servers
+  // that already had it are exactly the three that ran on 2026-08-27.
+  {$IFDEF UNIX} cthreads, BaseUnix, {$ENDIF}
   SysUtils,
   Classes,
   Net.SocketAPI,
@@ -48,6 +53,19 @@ const
 
 var
   GServer:     TCrossHttpServer;
+  // FIX-BENCH-REFCOUNT-1. TCrossHttpServer descends from TInterfacedObject
+  // (Net.CrossSocket.Base: TCrossSocketBase = class abstract(TInterfacedObject,
+  // ICrossSocket)), so a plain object reference leaves FRefCount at 0. The
+  // first internal path that takes an ICrossHttpServer into a local destroys
+  // the server when that local goes out of scope -- an EAccessViolation at
+  // startup, before the listening banner prints.
+  //
+  // This is the same defect Horse.Provider.CrossSocket.Server.pas fixes as
+  // FIX-REFCOUNT-1; the raw server never got it, which is exactly why the
+  // Horse row ran and this one crashed. Hold a permanent interface reference
+  // for the object's whole lifetime, and release THAT rather than calling
+  // Free -- _Release invokes Destroy.
+  GServerRef:  ICrossHttpServer;
   GShutdown:   Boolean = False;
   GAddHeaders: Boolean = False;
   GModeLabel:  string  = 'bare';
@@ -82,11 +100,21 @@ end;
 function HasSwitch(const ASwitch: string): Boolean;
 var
   I: Integer;
+  // FIX-BENCH-INLINEVAR-1. Was `var P := ParamStr(I);` inside the loop -- a
+  // Delphi 10.3+ inline variable declaration, which FPC does not support at
+  // any version. It reports it as
+  //   Error: Illegal expression
+  //   Fatal: Syntax error, ";" expected but "identifier P" found
+  // i.e. as a malformed statement rather than as an unsupported feature.
+  // CLAUDE.md's dual-compilation rule forbids Delphi-only syntax in files
+  // shared with FPC unless guarded; hoisting the declaration needs no guard
+  // and compiles identically on both.
+  P: string;
 begin
   Result := False;
   for I := 1 to ParamCount do
   begin
-    var P := ParamStr(I);
+    P := ParamStr(I);
     while (Length(P) > 0) and (P[1] in ['-', '/']) do Delete(P, 1, 1);
     if SameText(P, ASwitch) then
     begin
@@ -108,6 +136,7 @@ begin
 
   GTuner  := TConnTuner.Create;
   GServer := TCrossHttpServer.Create(0 {IoThreads: 0 = CPU count}, False {Ssl});
+  GServerRef := GServer;   // FIX-BENCH-REFCOUNT-1 — keep FRefCount >= 1
   GServer.OnConnected := GTuner.OnConnected;
   try
     // ── GET /ping ───────────────────────────────────────────────────────
@@ -179,7 +208,9 @@ begin
       TThread.Sleep(100);
 
   finally
-    GServer.Free;
+    // FIX-BENCH-REFCOUNT-1: release the interface, never Free the object.
+    GServerRef := nil;
+    GServer    := nil;
     GTuner.Free;
   end;
 
