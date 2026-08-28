@@ -22,15 +22,15 @@ REM    8. Port 9100 is not already in use (test port conflict check)
 REM ============================================================================
 
 set CONFIG=%~1
-set PLATFORM=%~2
+set TARGETPLAT=%~2
 if "%CONFIG%"==""   set CONFIG=Release
-if "%PLATFORM%"=="" set PLATFORM=Win64
+if "%TARGETPLAT%"=="" set TARGETPLAT=Win64
 
 set ERRORS=0
 
 echo.
 echo ============================================================
-echo  Environment check  (%CONFIG% %PLATFORM%)
+echo  Environment check  (%CONFIG% %TARGETPLAT%)
 echo ============================================================
 
 REM ── 1. Locate rsvars.bat ─────────────────────────────────────────────────────
@@ -38,18 +38,18 @@ REM ── 1. Locate rsvars.bat ────────────────
 set RSVARS_FOUND=0
 
 if defined DELPHI_ROOT (
-    if exist "%DELPHI_ROOT%\bin\rsvars.bat" (
-        set RSVARS="%DELPHI_ROOT%\bin\rsvars.bat"
+    if exist "!DELPHI_ROOT!\bin\rsvars.bat" (
+        set RSVARS="!DELPHI_ROOT!\bin\rsvars.bat"
         set RSVARS_FOUND=1
-        echo [OK]   rsvars.bat : %DELPHI_ROOT%\bin\rsvars.bat
+        echo [OK]   rsvars.bat : !DELPHI_ROOT!\bin\rsvars.bat
     ) else (
-        echo [FAIL] rsvars.bat not found at DELPHI_ROOT=%DELPHI_ROOT%
+        echo [FAIL] rsvars.bat not found at DELPHI_ROOT=!DELPHI_ROOT!
         set /A ERRORS+=1
     )
 ) else (
     for %%V in (23.0 22.0 21.0) do (
         if "!RSVARS_FOUND!"=="0" (
-            set CANDIDATE=C:\Program Files (x86)\Embarcadero\Studio\%%V\bin\rsvars.bat
+            set "CANDIDATE=C:\Program Files (x86)\Embarcadero\Studio\%%V\bin\rsvars.bat"
             if exist "!CANDIDATE!" (
                 set RSVARS="!CANDIDATE!"
                 set RSVARS_FOUND=1
@@ -59,7 +59,7 @@ if defined DELPHI_ROOT (
     )
     if "!RSVARS_FOUND!"=="0" (
         echo [FAIL] Delphi not found. Install Delphi 10.4+ or set DELPHI_ROOT.
-        echo        Checked: C:\Program Files (x86)\Embarcadero\Studio\{23.0,22.0,21.0}\bin\rsvars.bat
+        echo        Checked: C:\Program Files ^(x86^)\Embarcadero\Studio\{23.0,22.0,21.0}\bin\rsvars.bat
         set /A ERRORS+=1
     )
 )
@@ -70,7 +70,7 @@ if "!RSVARS_FOUND!"=="1" (
     call !RSVARS! >nul 2>&1
 
     if defined BDS (
-        echo [OK]   BDS        : %BDS%
+        echo [OK]   BDS        : !BDS!
     ) else (
         echo [FAIL] rsvars.bat did not set BDS. Delphi installation may be corrupt.
         set /A ERRORS+=1
@@ -81,36 +81,34 @@ if "!RSVARS_FOUND!"=="1" (
         echo [FAIL] msbuild not found in PATH after rsvars.bat. Check Delphi install.
         set /A ERRORS+=1
     ) else (
-        for /F "tokens=*" %%P in ('where msbuild 2^>nul') do (
-            echo [OK]   msbuild    : %%P
-            goto :msbuild_done
-        )
-        :msbuild_done
+        set "MSBUILDPATH="
+        for /F "tokens=*" %%P in ('where msbuild 2^>nul') do if not defined MSBUILDPATH set "MSBUILDPATH=%%P"
+        echo [OK]   msbuild    : !MSBUILDPATH!
     )
 
     REM Verify the correct DCC compiler binary exists
-    if "%PLATFORM%"=="Win64" (
-        if exist "%BDS%\bin\dcc64.exe" (
-            echo [OK]   dcc64      : %BDS%\bin\dcc64.exe
+    if "%TARGETPLAT%"=="Win64" (
+        if exist "!BDS!\bin\dcc64.exe" (
+            echo [OK]   dcc64      : !BDS!\bin\dcc64.exe
         ) else (
-            echo [FAIL] dcc64.exe not found at %BDS%\bin\dcc64.exe
-            echo        Win64 target requires dcc64.exe (included with all Delphi editions).
+            echo [FAIL] dcc64.exe not found at !BDS!\bin\dcc64.exe
+            echo        Win64 target requires dcc64.exe ^(included with all Delphi editions^).
             set /A ERRORS+=1
         )
     ) else (
-        if exist "%BDS%\bin\dcc32.exe" (
-            echo [OK]   dcc32      : %BDS%\bin\dcc32.exe
+        if exist "!BDS!\bin\dcc32.exe" (
+            echo [OK]   dcc32      : !BDS!\bin\dcc32.exe
         ) else (
-            echo [FAIL] dcc32.exe not found at %BDS%\bin\dcc32.exe
+            echo [FAIL] dcc32.exe not found at !BDS!\bin\dcc32.exe
             set /A ERRORS+=1
         )
     )
 
     REM Verify CodeGear.Delphi.Targets exists — if missing, every msbuild call fails
-    if exist "%BDS%\Bin\CodeGear.Delphi.Targets" (
-        echo [OK]   Targets    : %BDS%\Bin\CodeGear.Delphi.Targets
+    if exist "!BDS!\Bin\CodeGear.Delphi.Targets" (
+        echo [OK]   Targets    : !BDS!\Bin\CodeGear.Delphi.Targets
     ) else (
-        echo [FAIL] CodeGear.Delphi.Targets not found at %BDS%\Bin\
+        echo [FAIL] CodeGear.Delphi.Targets not found at !BDS!\Bin\
         echo        This file is part of the Delphi install. Re-install if missing.
         set /A ERRORS+=1
     )
@@ -125,11 +123,9 @@ if errorlevel 1 (
     echo        Then add its directory to the system PATH.
     set /A ERRORS+=1
 ) else (
-    for /F "tokens=*" %%P in ('where boss 2^>nul') do (
-        echo [OK]   boss       : %%P
-        goto :boss_done
-    )
-    :boss_done
+    set "BOSSPATH="
+    for /F "tokens=*" %%P in ('where boss 2^>nul') do if not defined BOSSPATH set "BOSSPATH=%%P"
+    echo [OK]   boss       : !BOSSPATH!
 )
 
 REM ── 4. .dproj files ──────────────────────────────────────────────────────────
@@ -157,16 +153,21 @@ if exist "modules\" (
 ) else (
     echo [WARN] modules\ does not exist — "boss install" has not been run yet.
     echo        Run: boss install
-    echo        (build.bat does this automatically)
+    echo        ^(build.bat does this automatically^)
 )
 
 REM Check for specific module subdirectories only if modules/ exists
 if exist "modules\" (
+    REM Delphi-Cross-Socket has no OpenSSL\ directory -- it never has in the
+    REM versions this provider supports; the bindings are Net\Net.OpenSSL.pas.
+    REM Current top-level layout is Net\ Utils\ CnPack\ DelphiToFPC\.
+    REM CnPack\Common is listed because Utils.Hash.pas uses CnMD5/CnSHA1/CnSHA2
+    REM from it, so its absence breaks the build rather than being cosmetic.
     for %%D in (
         "modules\horse\src"
         "modules\Delphi-Cross-Socket\Net"
         "modules\Delphi-Cross-Socket\Utils"
-        "modules\Delphi-Cross-Socket\OpenSSL"
+        "modules\Delphi-Cross-Socket\CnPack\Common"
     ) do (
         if exist %%D (
             echo [OK]   %%~D
@@ -202,7 +203,7 @@ if "%ERRORS%"=="0" (
     exit /b 0
 ) else (
     echo ============================================================
-    echo  %ERRORS% check(s^) FAILED — fix the issues above before building
+    echo  %ERRORS% check^(s^) FAILED — fix the issues above before building
     echo ============================================================
     exit /b 1
 )
