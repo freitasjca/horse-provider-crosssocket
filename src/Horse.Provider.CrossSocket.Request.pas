@@ -499,13 +499,20 @@ begin
           // [PATCH-REQ-9] Decode body to string once here so that
           // THorseRequest.Body: string is O(1) for all callers.
           // FBody holds the non-owning stream reference for Body<TStream>
-          // callers; FBodyString holds the decoded text for Body: string.
+          // callers (position guaranteed 0 — see FIX-REQ-BODY-POS-1 below);
+          // FBodyString holds the decoded text for Body: string.
 {$IF NOT DEFINED(FPC)}
           SetLength(LBytes, Stream.Size);
           Stream.Position := 0;
           Stream.Read(LBytes[0], Stream.Size);
           AHorseReq.SetBodyString(TEncoding.UTF8.GetString(LBytes));
 {$ENDIF}
+          // [FIX-REQ-BODY-POS-1] Rewind after the UTF-8 decode read so that
+          // Body<TStream> callers always receive the stream at position 0.
+          // On FPC the {$IF NOT DEFINED(FPC)} block above is skipped and the
+          // stream is already at 0 (set by line 497); this line makes the
+          // guarantee explicit on both platforms.
+          Stream.Position := 0;
         end;
       end;
 
