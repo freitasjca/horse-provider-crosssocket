@@ -34,9 +34,10 @@
       AddCACertificate → SSL_CTX_add_client_CA + X509_STORE_add_cert
       SetVerifyPeer    → SSL_CTX_set_verify(SSL_VERIFY_PEER
                            or SSL_VERIFY_FAIL_IF_NO_PEER_CERT) / SSL_VERIFY_NONE
-    ── TLSOPT-2 (fork-only, not in upstream winddriver) ────────────────────────
+    ── TLSOPT-2 (PR #200 filed upstream 2026-08-29; freitasjca/DCS ≥1.0.8) ─────
     procedure SetCipherList(const ACipherList: string)
-      → SSL_CTX_set_cipher_list (TLS 1.2 cipher override; freitasjca fork only)
+      → SSL_CTX_set_cipher_list (TLS 1.2 cipher override; requires DCS ≥1.0.8
+         or winddriver upstream after PR #200 merges)
 
   TCrossServer (Net.CrossServer.pas):
     procedure Start(const ACallback: TCrossListenCallback = nil)
@@ -65,10 +66,11 @@
     SSLCACertFile    → FServer.AddCACertificateFile     (mTLS; upstream API)
     SSLVerifyPeer    → FServer.SetVerifyPeer             (mTLS; upstream API)
     SSLKeyPassword   → passed as APassword to SetPrivateKeyFile (upstream API)
-    SSLCipherList    → FServer.SetCipherList             (TLSOPT-2; fork-only)
+    SSLCipherList    → FServer.SetCipherList             (TLSOPT-2; DCS ≥1.0.8)
 
-  SetCipherList is not in upstream winddriver/Delphi-Cross-Socket — use the
-  freitasjca fork (≥1.0.6) or apply patches/Delphi-Cross-Socket/ manually.
+  SetCipherList requires freitasjca/Delphi-Cross-Socket ≥1.0.8, or winddriver
+  upstream after PR #200 merges. Raises ESsl if ACipherList has no matching
+  ciphers.
 
   Reserved (CrossSocket API not available):
     KeepAliveTimeout — no matching property confirmed in TCrossHttpServer
