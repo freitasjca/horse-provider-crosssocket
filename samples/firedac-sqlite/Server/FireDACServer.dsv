@@ -1,0 +1,12 @@
+﻿[ClosedView_QzpcbGFuZ1xSZXBvXGhvcnNlLXByb3ZpZGVyLWNyb3Nzc29ja2V0XHNhbXBsZXNcZmlyZWRhYy1z
+cWxpdGVcU2VydmVyXG1vZHVsZXNcRGVscGhpLUNyb3NzLVNvY2tldFxOZXRcTmV0LkNyb3NzSHR0
+cFNlcnZlci5wYXM=]
+Module=C:\lang\Repo\horse-provider-crosssocket\samples\firedac-sqlite\Server\modules\Delphi-Cross-Socket\Net\Net.CrossHttpServer.pas
+CursorX=2
+CursorY=12
+TopLine=1
+LeftCol=1
+Elisions={{1768,4},{1782,15},{'HttpParser事件'}}{{1982,4},{1985,15},{'内部: 基础发送方法'}}{{1993,4},{2002,15},{'压缩发送'}}{{2004,4},{2013,15},{'不压缩发送'}}{{2015,4},{2034,15},{'常规方法'}}{{2841,2},{2877,13},{'创建Body'}}{{3970,4},{3981,15},{'Session'}}{{3986,4},{3999,15},{'中间件'}}{{4001,4},{4015,15},{'路由'}}{{4017,4},{4026,15},{'响应请求事件'}}
+Bookmarks=
+EditViewName=C:\lang\Repo\horse-provider-crosssocket\samples\firedac-sqlite\Server\modules\Delphi-Cross-Socket\Net\Net.CrossHttpServer.pas
+

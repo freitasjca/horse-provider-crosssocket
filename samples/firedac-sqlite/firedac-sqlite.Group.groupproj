@@ -1,0 +1,48 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{8668CD19-C73C-4192-B3B2-6A4F86303269}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="Client\FireDACClient.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Server\FireDACServer.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="FireDACClient">
+        <MSBuild Projects="Client\FireDACClient.dproj"/>
+    </Target>
+    <Target Name="FireDACClient:Clean">
+        <MSBuild Projects="Client\FireDACClient.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="FireDACClient:Make">
+        <MSBuild Projects="Client\FireDACClient.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="FireDACServer">
+        <MSBuild Projects="Server\FireDACServer.dproj"/>
+    </Target>
+    <Target Name="FireDACServer:Clean">
+        <MSBuild Projects="Server\FireDACServer.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="FireDACServer:Make">
+        <MSBuild Projects="Server\FireDACServer.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="FireDACClient;FireDACServer"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="FireDACClient:Clean;FireDACServer:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="FireDACClient:Make;FireDACServer:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

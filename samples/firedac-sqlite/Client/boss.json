@@ -1,0 +1,6 @@
+{
+  "name": "firedac-sqlite-client",
+  "description": "FireDAC/SQLite CRUD demo client (THTTPClient + FireDAC, no extra deps)",
+  "version": "1.0.0",
+  "dependencies": {}
+}
