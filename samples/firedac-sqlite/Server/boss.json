@@ -3,6 +3,6 @@
   "description": "Horse + CrossSocket FireDAC/SQLite CRUD demo server",
   "version": "1.0.0",
   "dependencies": {
-    "github.com/freitasjca/horse-provider-crosssocket": ">=1.0.20"
+    "github.com/freitasjca/horse-provider-crosssocket": ">=1.0.21"
   }
 }
