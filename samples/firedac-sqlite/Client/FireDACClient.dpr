@@ -1,4 +1,4 @@
-program FireDACClient;
+﻿program FireDACClient;
 
 // ============================================================================
 //  FireDACClient — FireDAC SQLite ↔ Horse + CrossSocket demo client
@@ -47,6 +47,8 @@ uses
   FireDAC.Stan.Option,
   FireDAC.Stan.Param,
   FireDAC.Stan.Error,
+  FireDAC.Stan.Def,
+  FireDAC.Stan.Async,
   FireDAC.Phys,
   FireDAC.Phys.SQLite,
   FireDAC.Phys.SQLiteDef,

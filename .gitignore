@@ -69,6 +69,7 @@ dunitx-results.xml
 # Boss
 modules/
 boss.lock
+boss-lock.json
 
 # Claude Code
 .claude/settings.local.json

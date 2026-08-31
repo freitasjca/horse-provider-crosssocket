@@ -505,7 +505,16 @@ begin
           SetLength(LBytes, Stream.Size);
           Stream.Position := 0;
           Stream.Read(LBytes[0], Stream.Size);
-          AHorseReq.SetBodyString(TEncoding.UTF8.GetString(LBytes));
+          // [FIX-BINBODY-1] sfBinary payloads contain arbitrary bytes that may
+          // not form valid UTF-8.  TEncoding.UTF8.GetString raises EEncodingError
+          // ("No mapping for the Unicode character...") on those sequences.
+          // Body<TStream> is the correct API for binary bodies; Body: string is
+          // left empty so that callers checking it get '' rather than a crash.
+          try
+            AHorseReq.SetBodyString(TEncoding.UTF8.GetString(LBytes));
+          except
+            AHorseReq.SetBodyString('');
+          end;
 {$ENDIF}
           // [FIX-REQ-BODY-POS-1] Rewind after the UTF-8 decode read so that
           // Body<TStream> callers always receive the stream at position 0.

@@ -145,7 +145,19 @@ begin
     SetLength(LBytes, LStream.Size);
     if LStream.Size > 0 then
       LStream.Read(LBytes[0], LStream.Size);
-    FContentCache := TEncoding.UTF8.GetString(LBytes);
+    // [FIX-BINBODY-1] A binary body (e.g. FireDAC sfBinary) is not valid UTF-8.
+    // TEncoding.GetString raises EEncodingError ('No mapping for the Unicode
+    // character...') when the decode yields zero chars for a non-empty input.
+    // Content is a *text* accessor; binary callers use Body<TStream>. Degrade
+    // to '' rather than letting the decode abort the whole request with a 500.
+    try
+      FContentCache := TEncoding.UTF8.GetString(LBytes);
+    except
+      FContentCache := '';
+    end;
+    // [FIX-REQ-BODY-POS-1] Rewind: the read above left the stream at EOF, and
+    // this stream is the same non-owning reference Body<TStream> hands out.
+    LStream.Position := 0;
   end;
   FContentCached := True;
   Result := FContentCache;

@@ -1,4 +1,4 @@
-program FireDACServer;
+﻿program FireDACServer;
 
 // ============================================================================
 //  FireDACServer — Horse + CrossSocket CRUD demo with SQLite
@@ -18,8 +18,11 @@ program FireDACServer;
 //    (See: CLAUDE.md "Known ownership trap")
 //  • Req.Body<TStream>.Position is 0 on entry when using
 //    horse-provider-crosssocket v1.0.18+ (FIX-REQ-BODY-POS-1).
-//  • Stream passed to Res.Send<TStream>(S) transfers ownership to Horse.
-//    Horse frees S after the async send; do NOT free it yourself.
+//  • Use Res.SendFile(S, '', ContentType) to send binary streams.  SendFile
+//    copies S into an owned internal buffer and sets Content-Type.  The caller
+//    retains ownership of S and MUST free it after SendFile returns.
+//    Res.Send<TStream> is not used here: Horse <=3.3.0 (what Boss installs)
+//    stores it in FContent, invisible to the CrossSocket bridge → empty body.
 //  • CrossSocket IOCP/epoll worker threads have no COM apartment.
 //    FireDAC sfXML uses MSXML (COM) — call CoInitialize/CoUninitialize
 //    inside any handler that uses sfXML.  sfBinary and sfJSON use pure
@@ -36,7 +39,7 @@ program FireDACServer;
 //
 //  ── Build ─────────────────────────────────────────────────────────────────
 //  Delphi IDE → Open → FireDACServer.dpr → Project → Build
-//  Requires: Horse >=3.3.0, horse-provider-crosssocket >=1.0.19 (boss install)
+//  Requires: Horse >=3.3.0, horse-provider-crosssocket >=1.0.21 (boss install)
 //
 //  ── Run ──────────────────────────────────────────────────────────────────
 //  ./FireDACServer.exe
@@ -56,6 +59,8 @@ uses
   FireDAC.Stan.Option,
   FireDAC.Stan.Param,
   FireDAC.Stan.Error,
+  FireDAC.Stan.Def,
+  FireDAC.Stan.Async,
   FireDAC.Phys,
   FireDAC.Phys.SQLite,
   FireDAC.Phys.SQLiteDef,
@@ -127,7 +132,7 @@ end;
 
 // ─── GET /items ──────────────────────────────────────────────────────────────
 // Returns all items as a TFDMemTable sfBinary stream.
-// Ownership of the stream transfers to Horse on Res.Send<TStream> — do NOT free it.
+// SendFile copies LStream into an owned buffer; caller must FreeAndNil(LStream) after.
 
 procedure RouteGetItems(Req: THorseRequest; Res: THorseResponse);
 var
@@ -154,11 +159,14 @@ begin
       Exit;
     end;
   end;
-  FreeAndNil(LTable);  { LTable is done; LStream ownership goes to Horse below }
+  FreeAndNil(LTable);
 
   WriteLn('[GET /items] ', LRowCount, ' row(s), ', LSize, ' bytes');
-  Res.ContentType('application/octet-stream');
-  Res.Send<TStream>(LStream);  { Horse frees LStream after async send }
+  { SendFile copies LStream into an owned FCSContentStream and sets Content-Type.
+    The caller retains ownership of LStream and MUST free it — unlike Send<TStream>
+    which transfers ownership but requires Horse > 3.3.0 (DoSendStream). }
+  Res.SendFile(LStream, '', 'application/octet-stream');
+  FreeAndNil(LStream);
 end;
 
 // ─── GET /items/:id ──────────────────────────────────────────────────────────
@@ -198,7 +206,11 @@ begin
     LObj.AddPair('name',  LQ.FieldByName('name').AsString);
     LObj.AddPair('value', TJSONNumber.Create(LQ.FieldByName('value').AsFloat));
     WriteLn('[GET /items/', LId, '] found');
-    Res.Send(LObj);  { Horse serialises TJSONObject and frees it }
+    { Send<T> in Horse <=3.3.0 stores in FContent (not visible to the bridge).
+      Serialize here so Res.Send(string) sets FCSBody — the bridge always sees it. }
+    Res.ContentType('application/json');
+    Res.Send(LObj.ToJSON);
+    FreeAndNil(LObj);
   except
     on E: Exception do
     begin
