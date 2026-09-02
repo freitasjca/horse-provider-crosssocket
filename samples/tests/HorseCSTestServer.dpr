@@ -504,6 +504,68 @@ begin
     end
   );
 
+  // ── FIX-BINBODY-1: a binary request body must not abort the request ──────────
+  // A body of arbitrary bytes (0..255) is deliberately NOT valid UTF-8.  Before
+  // FIX-BINBODY-1 both text accessors decoded the raw body eagerly with
+  // TEncoding.UTF8.GetString, which raises EEncodingError ('No mapping for the
+  // Unicode character exists in the target multi-byte code page') when a
+  // non-empty input decodes to zero chars.  That fired inside the request
+  // bridge, so the request died with a 500 before this handler ever ran — the
+  // tell was the complete absence of handler-side logging.
+  //
+  // Two independent call sites had to be guarded; guarding only the first left
+  // the failure fully intact, so this route exercises BOTH:
+  //   Req.Body                  → Request.pas     MapBody, btBinary branch
+  //   Req.RawWebRequest.Content → RawRequest.pas  GetContent
+  //
+  // Read order matters. The two text accessors run FIRST, and Body<TStream> has
+  // to survive what they did to the stream: GetContent used to read the shared
+  // non-owning stream to EOF without rewinding, so a handler that touched
+  // Content first then saw Size bytes but read zero of them.  "sum" is what
+  // actually catches that — a truncated or re-read body cannot reproduce it.
+  //
+  // Asserted by the client: status 200, size 256, sum 32640 (= 0+1+…+255).
+  // textLen/rawLen are reported for diagnosis but deliberately NOT asserted:
+  // the degradation to '' is correct-but-incidental, and FPC decodes via a
+  // different path (MapBody's decode is Delphi-only), so pinning them would
+  // make this test compiler-specific for no added coverage.
+  THorse.Post('/body/binary',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LText:   string;
+      LRaw:    string;
+      LStream: TStream;
+      LBytes:  TBytes;
+      I:       Integer;
+      LSum:    Integer;
+      LSize:   Integer;
+    begin
+      LText := Req.Body;                    // site 1 — must not raise
+      if Assigned(Req.RawWebRequest) then
+        LRaw := Req.RawWebRequest.Content   // site 2 — must not raise
+      else
+        LRaw := '';
+
+      LSum  := 0;
+      LSize := 0;
+      LStream := Req.Body<TStream>;         // must still be readable from 0
+      if Assigned(LStream) then
+      begin
+        LSize := LStream.Size;
+        LStream.Position := 0;              // never free this — non-owning
+        SetLength(LBytes, LSize);
+        if LSize > 0 then
+          LStream.Read(LBytes[0], LSize);
+        for I := 0 to LSize - 1 do
+          Inc(LSum, LBytes[I]);
+      end;
+
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(Format('{"size":%d,"sum":%d,"textLen":%d,"rawLen":%d}',
+           [LSize, LSum, Length(LText), Length(LRaw)]));
+    end
+  );
+
 end;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
