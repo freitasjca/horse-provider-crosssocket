@@ -7,10 +7,41 @@
 //  TFDMemTable binary streams over horse-provider-crosssocket.
 //
 //  ── Endpoints ────────────────────────────────────────────────────────────
-//  GET  /items         → all rows as TFDMemTable sfBinary stream
-//  GET  /items/:id     → single row as JSON  {id, name, value}
-//  POST /items         → accepts TFDMemTable sfBinary, inserts rows
-//  GET  /items/count   → plain-text row count (for health checks)
+//  GET    /items         → all rows as TFDMemTable sfBinary (Res.SendFile)
+//  GET    /items/export  → same bytes as an attachment      (Res.Download)
+//  GET    /items/:id     → single row as JSON  {id, name, value}
+//  GET    /items/count   → plain-text row count (for health checks)
+//  POST   /items         ← TFDMemTable sfBinary, inserts rows
+//  PUT    /items         ← TFDMemTable sfBinary, updates rows by id
+//  DELETE /items         ← TFDMemTable sfBinary, deletes rows by id
+//  DELETE /items/:id     → 204 No Content (conventional single-resource form)
+//
+//  ── The complete TStream surface on this provider ────────────────────────
+//
+//  RECEIVING — one API, used by POST, PUT and DELETE here:
+//    Req.Body<TStream>   non-owning reference into CrossSocket's socket buffer.
+//                        Position is 0 on entry (v1.0.18+). NEVER free it, and
+//                        never hand it to a worker thread — it dies with the
+//                        request. Copy first if you need it to outlive the
+//                        handler.
+//    Req.Body (string)   a *text* accessor. The provider decodes the body once
+//                        per request; for a genuinely binary payload it yields
+//                        '' rather than raising (FIX-BINBODY-1, v1.0.21).
+//
+//  SENDING — three that work, one that does not:
+//    Res.SendFile(S,N,C) COPIES S into a response-owned buffer, sends inline.
+//                        Caller keeps ownership and MUST free S afterwards.
+//    Res.Download(S,N,C) identical, but Content-Disposition: attachment.
+//                        Same ownership rule — caller frees.
+//    Res.Render(S,N)     identical, inline, content type inferred from N.
+//    Res.Send<TStream>   DOES NOT WORK on any released Horse. It stores the
+//                        stream in FContent, which no provider bridge reads, so
+//                        the client receives Content-Length: 0 and no error.
+//                        The fix (DoSendStream) is merged to HashLoad/horse
+//                        master as PR #540 but is in no released tag, and Boss
+//                        installs by tag. Use SendFile/Download until a release
+//                        ships it. Note the ownership contracts are opposite:
+//                        Send<TStream> takes ownership, SendFile does not.
 //
 //  ── Key patterns encoded here ────────────────────────────────────────────
 //  • Req.Body<TStream> is a NON-OWNING reference into CrossSocket's socket
@@ -328,6 +359,247 @@ begin
   end;
 end;
 
+// ─── PUT /items ──────────────────────────────────────────────────────────────
+// Accepts a TFDMemTable sfBinary body and UPDATEs existing rows by id.
+//
+// Same request-stream contract as POST — Req.Body<TStream> is a non-owning
+// reference into CrossSocket's socket buffer, already at position 0.
+//
+// The difference worth studying is the id column: POST ignores it (the database
+// assigns one), PUT requires it. A row whose id is absent from the table is
+// reported in "missing" rather than silently inserted — a PUT that quietly
+// creates rows is indistinguishable from a POST with a typo.
+
+procedure RoutePutItems(Req: THorseRequest; Res: THorseResponse);
+var
+  LBody:    TStream;
+  LTable:   TFDMemTable;
+  LQ:       TFDQuery;
+  LUpdated: Integer;
+  LMissing: Integer;
+  LId:      Integer;
+begin
+  LBody := Req.Body<TStream>;
+  if not Assigned(LBody) or (LBody.Size = 0) then
+  begin
+    WriteLn('[PUT /items] Rejected — empty body.');
+    Res.Send('Empty body. Send a TFDMemTable sfBinary stream with an id column.')
+       .Status(400);
+    Exit;
+  end;
+
+  LUpdated := 0;
+  LMissing := 0;
+  LTable   := TFDMemTable.Create(nil);
+  LQ       := TFDQuery.Create(nil);
+  try
+    try
+      LTable.LoadFromStream(LBody, TFDStorageFormat.sfBinary);
+
+      { The client must include id — without it there is nothing to match on. }
+      if LTable.FindField('id') = nil then
+      begin
+        WriteLn('[PUT /items] Rejected — stream has no id column.');
+        Res.Send('Stream has no "id" column — PUT updates by id.').Status(400);
+        Exit;
+      end;
+
+      GLock.Acquire;
+      try
+        LQ.Connection := GConn;
+        LQ.SQL.Text   :=
+          'UPDATE items SET name = :name, value = :value WHERE id = :id';
+        LTable.First;
+        while not LTable.EOF do
+        begin
+          LId := LTable.FieldByName('id').AsInteger;
+          LQ.ParamByName('id').AsInteger    := LId;
+          LQ.ParamByName('name').AsString   := LTable.FieldByName('name').AsString;
+          LQ.ParamByName('value').AsFloat   := LTable.FieldByName('value').AsFloat;
+          LQ.ExecSQL;
+          { RowsAffected is 0 when no row carries that id. }
+          if LQ.RowsAffected > 0 then
+            Inc(LUpdated)
+          else
+            Inc(LMissing);
+          LTable.Next;
+        end;
+      finally
+        GLock.Release;
+      end;
+
+      WriteLn('[PUT /items] Updated ', LUpdated, ', missing ', LMissing);
+      Res.ContentType('application/json')
+         .Send(Format('{"updated":%d,"missing":%d}', [LUpdated, LMissing]));
+    except
+      on E: Exception do
+      begin
+        WriteLn('[PUT /items] Error: ', E.Message);
+        Res.Send('Error: ' + E.Message).Status(500);
+      end;
+    end;
+  finally
+    LQ.Free;
+    LTable.Free;
+  end;
+end;
+
+// ─── DELETE /items ───────────────────────────────────────────────────────────
+// Accepts a TFDMemTable sfBinary body listing the ids to delete.
+//
+// A request body on DELETE is legal (RFC 9110 §9.3.5) but has no defined
+// semantics, so intermediaries may drop it — this route exists to show that the
+// TStream request path is identical on DELETE, not as a recommendation. For a
+// public API prefer DELETE /items/:id, registered below.
+
+procedure RouteDeleteItems(Req: THorseRequest; Res: THorseResponse);
+var
+  LBody:    TStream;
+  LTable:   TFDMemTable;
+  LQ:       TFDQuery;
+  LDeleted: Integer;
+  LMissing: Integer;
+begin
+  LBody := Req.Body<TStream>;
+  if not Assigned(LBody) or (LBody.Size = 0) then
+  begin
+    WriteLn('[DELETE /items] Rejected — empty body.');
+    Res.Send('Empty body. Send a TFDMemTable sfBinary stream with an id column.')
+       .Status(400);
+    Exit;
+  end;
+
+  LDeleted := 0;
+  LMissing := 0;
+  LTable   := TFDMemTable.Create(nil);
+  LQ       := TFDQuery.Create(nil);
+  try
+    try
+      LTable.LoadFromStream(LBody, TFDStorageFormat.sfBinary);
+      if LTable.FindField('id') = nil then
+      begin
+        Res.Send('Stream has no "id" column.').Status(400);
+        Exit;
+      end;
+
+      GLock.Acquire;
+      try
+        LQ.Connection := GConn;
+        LQ.SQL.Text   := 'DELETE FROM items WHERE id = :id';
+        LTable.First;
+        while not LTable.EOF do
+        begin
+          LQ.ParamByName('id').AsInteger := LTable.FieldByName('id').AsInteger;
+          LQ.ExecSQL;
+          if LQ.RowsAffected > 0 then Inc(LDeleted) else Inc(LMissing);
+          LTable.Next;
+        end;
+      finally
+        GLock.Release;
+      end;
+
+      WriteLn('[DELETE /items] Deleted ', LDeleted, ', missing ', LMissing);
+      Res.ContentType('application/json')
+         .Send(Format('{"deleted":%d,"missing":%d}', [LDeleted, LMissing]));
+    except
+      on E: Exception do
+      begin
+        WriteLn('[DELETE /items] Error: ', E.Message);
+        Res.Send('Error: ' + E.Message).Status(500);
+      end;
+    end;
+  finally
+    LQ.Free;
+    LTable.Free;
+  end;
+end;
+
+// ─── DELETE /items/:id ───────────────────────────────────────────────────────
+// The conventional single-resource delete — no body, no stream.
+// Included so the demo shows the idiomatic form beside the stream-bodied one.
+
+procedure RouteDeleteItem(Req: THorseRequest; Res: THorseResponse);
+var
+  LQ: TFDQuery;
+  LId: Integer;
+begin
+  if not TryStrToInt(Req.Params['id'], LId) then
+  begin
+    Res.Send('Bad id — must be an integer').Status(400);
+    Exit;
+  end;
+
+  LQ := TFDQuery.Create(nil);
+  try
+    try
+      GLock.Acquire;
+      try
+        LQ.Connection := GConn;
+        LQ.SQL.Text   := 'DELETE FROM items WHERE id = :id';
+        LQ.ParamByName('id').AsInteger := LId;
+        LQ.ExecSQL;
+      finally
+        GLock.Release;
+      end;
+
+      if LQ.RowsAffected = 0 then
+      begin
+        WriteLn('[DELETE /items/', LId, '] not found');
+        Res.Send('Not found').Status(404);
+      end
+      else
+      begin
+        WriteLn('[DELETE /items/', LId, '] deleted');
+        Res.Status(204);   { 204 No Content — nothing to send }
+      end;
+    except
+      on E: Exception do
+      begin
+        WriteLn('[DELETE /items/', LId, '] Error: ', E.Message);
+        Res.Send('Error: ' + E.Message).Status(500);
+      end;
+    end;
+  finally
+    LQ.Free;
+  end;
+end;
+
+// ─── GET /items/export ───────────────────────────────────────────────────────
+// Same bytes as GET /items, sent with Res.Download instead of Res.SendFile.
+//
+// The two differ only in Content-Disposition — Download says `attachment`
+// (browsers save it), SendFile says `inline`. Ownership is identical: both COPY
+// the source into a response-owned buffer at call time, so the caller still has
+// to free its own stream. That is the opposite of Res.Send<TStream>, which
+// takes ownership — and which does not work at all on released Horse; see the
+// header note.
+
+procedure RouteExportItems(Req: THorseRequest; Res: THorseResponse);
+var
+  LTable:  TFDMemTable;
+  LStream: TMemoryStream;
+begin
+  LTable  := nil;
+  LStream := nil;
+  try
+    LTable  := QueryToMemTable('SELECT id, name, value FROM items ORDER BY id');
+    LStream := TMemoryStream.Create;
+    LTable.SaveToStream(LStream, TFDStorageFormat.sfBinary);
+    LStream.Position := 0;
+    WriteLn('[GET /items/export] ', LTable.RecordCount, ' row(s), ',
+      LStream.Size, ' bytes (attachment)');
+    Res.Download(LStream, 'items.fdbin', 'application/octet-stream');
+  except
+    on E: Exception do
+    begin
+      WriteLn('[GET /items/export] Error: ', E.Message);
+      Res.Send('Error: ' + E.Message).Status(500);
+    end;
+  end;
+  FreeAndNil(LTable);
+  FreeAndNil(LStream);   { Download copied it — freeing here is required }
+end;
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 begin
@@ -340,20 +612,29 @@ begin
       WriteLn('Port      : ', DEMO_PORT);
       WriteLn;
       WriteLn('Endpoints:');
-      WriteLn('  GET  http://127.0.0.1:', DEMO_PORT, '/items         → TFDMemTable sfBinary');
-      WriteLn('  GET  http://127.0.0.1:', DEMO_PORT, '/items/:id     → JSON');
-      WriteLn('  GET  http://127.0.0.1:', DEMO_PORT, '/items/count   → plain-text count');
-      WriteLn('  POST http://127.0.0.1:', DEMO_PORT, '/items         ← TFDMemTable sfBinary');
+      WriteLn('  GET    /items          → sfBinary via Res.SendFile   (inline)');
+      WriteLn('  GET    /items/export   → sfBinary via Res.Download   (attachment)');
+      WriteLn('  GET    /items/:id      → JSON');
+      WriteLn('  GET    /items/count    → plain-text count');
+      WriteLn('  POST   /items          ← sfBinary via Req.Body<TStream>  (insert)');
+      WriteLn('  PUT    /items          ← sfBinary via Req.Body<TStream>  (update by id)');
+      WriteLn('  DELETE /items          ← sfBinary via Req.Body<TStream>  (delete by id)');
+      WriteLn('  DELETE /items/:id      → 204, no body');
+      WriteLn('  (base http://127.0.0.1:', DEMO_PORT, ')');
       WriteLn;
       WriteLn('Run FireDACClient.exe to exercise all endpoints.');
       WriteLn('Ctrl-C to stop.');
       WriteLn;
 
       { Note: register /items/count BEFORE /items/:id, otherwise ":id" captures "count". }
-      THorse.Get('/items/count', RouteGetCount);
-      THorse.Get('/items/:id',   RouteGetItem);
-      THorse.Get('/items',       RouteGetItems);
-      THorse.Post('/items',      RoutePostItems);
+      THorse.Get('/items/count',   RouteGetCount);
+      THorse.Get('/items/export',  RouteExportItems);
+      THorse.Get('/items/:id',     RouteGetItem);
+      THorse.Get('/items',         RouteGetItems);
+      THorse.Post('/items',        RoutePostItems);
+      THorse.Put('/items',         RoutePutItems);
+      THorse.Delete('/items/:id',  RouteDeleteItem);
+      THorse.Delete('/items',      RouteDeleteItems);
 
       THorse.Listen(DEMO_PORT);
     finally

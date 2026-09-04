@@ -1,4 +1,4 @@
-﻿program HorseCSTestClient;
+program HorseCSTestClient;
 
 {$APPTYPE CONSOLE}
 
@@ -370,6 +370,8 @@ var
   LStreamBatch:   array[0..1] of TConcurrentEntry;
   LStreamAllOk:   Boolean;
   LStreamAllBody: Boolean;
+  // Test 37 — binary request body (FIX-BINBODY-1)
+  LBinBody:       TBytes;
 
   { Section header. Prints the elapsed wall-clock time since the previous
     Section call so a slow test stands out without having to compare
@@ -1085,6 +1087,59 @@ begin
     LStreamAllBody, '');
   DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
   Check('pool healthy after concurrent streaming',
+    (R.StatusCode = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.StatusCode, R.Body]));
+
+  // ── 37  Binary request body — FIX-BINBODY-1 ──────────────────────────────────
+  // Payload is every byte value 0..255, which is guaranteed invalid UTF-8 (it
+  // contains NUL, lone continuation bytes, and truncated multi-byte leaders).
+  // Before FIX-BINBODY-1 this returned 500 "No mapping for the Unicode
+  // character exists in the target multi-byte code page" for ANY binary body —
+  // FireDAC sfBinary, protobuf, images, file uploads alike.
+  //
+  // The "sum" assertion is the load-bearing one: it fails if the body is
+  // truncated, re-read from the wrong offset, or if GetContent left the shared
+  // non-owning stream at EOF (the rewind half of the fix). A size-only check
+  // would pass against a stream that reports 256 but yields nothing.
+  Section('37  POST /body/binary  (FIX-BINBODY-1 — arbitrary bytes 0..255)');
+  SetLength(LBinBody, 256);
+  for I := 0 to 255 do
+    LBinBody[I] := Byte(I);
+  LHeaders := THttpHeader.Create;
+  try
+    LHeaders['Content-Type'] := 'application/octet-stream';
+    DoSync(AClient, 'POST', BASE_URL + '/body/binary', LHeaders, LBinBody, R);
+  finally
+    LHeaders.Free;
+  end;
+  Check('status 200 — binary body did not raise EEncodingError',
+    R.StatusCode = 200, IntToStr(R.StatusCode) + ' / ' + R.Body);
+  Check('all 256 bytes reached the handler',
+    Pos('"size":256', R.Body) > 0, R.Body);
+  Check('bytes intact after both text accessors read the stream',
+    Pos('"sum":32640', R.Body) > 0, R.Body);
+  DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
+  Check('pool healthy after binary body',
+    (R.StatusCode = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.StatusCode, R.Body]));
+
+  // ── 38  Res.Send(TBytes) — FIX-BODYBYTES-1 ───────────────────────────────────
+  // Horse core's Send(TBytes) writes the FCSBodyBytes shadow slot (public
+  // BodyBytes). WriteBody read ContentStream, BodyText and RawWebResponse but
+  // never BodyBytes, so the response fell through to the empty-body tail:
+  // HTTP 200, Content-Length 0, no exception and nothing in any log.
+  //
+  // The status check alone would NOT catch that — a 200 was always returned.
+  // The body comparison is the assertion that matters.
+  Section('38  GET /body/bytes  (FIX-BODYBYTES-1 — Res.Send(TBytes))');
+  DoSync(AClient, 'GET', BASE_URL + '/body/bytes', nil, nil, R);
+  Check('status 200', R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('body is not empty (the whole point — it used to be)',
+    R.Body <> '', Format('len=%d', [Length(R.Body)]));
+  Check('body matches the bytes the handler sent',
+    R.Body = 'BODYBYTES-OK-0123456789', R.Body);
+  DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
+  Check('pool healthy after Send(TBytes)',
     (R.StatusCode = 200) and (R.Body = 'pong'),
     Format('%d / %s', [R.StatusCode, R.Body]));
 

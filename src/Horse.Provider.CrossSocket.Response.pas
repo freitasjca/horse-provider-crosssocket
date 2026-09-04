@@ -441,6 +441,29 @@ begin
     end;
   end;
 
+  // [FIX-BODYBYTES-1] BodyBytes: the shadow slot written by Res.Send(TBytes).
+  //
+  // Horse core's Send(const AContent: TBytes) stores into FCSBodyBytes on the
+  // shadow path (FWebResponse = nil, i.e. every non-WebBroker provider) and
+  // exposes it as the public BodyBytes property. This bridge never read that
+  // slot, so Res.Send(SomeBytes) fell through BodyText (still empty) and
+  // RawWebResponse (also empty) to the empty-body tail: the client received
+  // 200 with Content-Length: 0 and no error anywhere. Same silent-empty-body
+  // failure as the historical Res.Send<TStream>, one slot along.
+  //
+  // Checked BEFORE BodyText because the two are mutually exclusive in practice
+  // — Send(TBytes) and Send(string) write different fields — and bytes need no
+  // encoding step, so this is also the cheapest body path the provider has:
+  // the TBytes is refcounted straight through to CrossSocket's Send(TBytes),
+  // with no stream copy and no UTF-8 conversion.
+  if Length(AHorseRes.BodyBytes) > 0 then
+  begin
+    Buf := AHorseRes.BodyBytes;
+    ACrossRes.Header['Content-Length'] := IntToStr(Length(Buf));
+    ACrossRes.Send(Buf);
+    Exit;
+  end;
+																					 
   // BodyText: PATCH-RES-4 shadow field (empty string when not set)
   if AHorseRes.BodyText <> '' then
   begin
