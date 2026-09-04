@@ -1123,6 +1123,26 @@ begin
     (R.StatusCode = 200) and (R.Body = 'pong'),
     Format('%d / %s', [R.StatusCode, R.Body]));
 
+  // ── 38  Res.Send(TBytes) — FIX-BODYBYTES-1 ───────────────────────────────────
+  // Horse core's Send(TBytes) writes the FCSBodyBytes shadow slot (public
+  // BodyBytes). WriteBody read ContentStream, BodyText and RawWebResponse but
+  // never BodyBytes, so the response fell through to the empty-body tail:
+  // HTTP 200, Content-Length 0, no exception and nothing in any log.
+  //
+  // The status check alone would NOT catch that — a 200 was always returned.
+  // The body comparison is the assertion that matters.
+  Section('38  GET /body/bytes  (FIX-BODYBYTES-1 — Res.Send(TBytes))');
+  DoSync(AClient, 'GET', BASE_URL + '/body/bytes', nil, nil, R);
+  Check('status 200', R.StatusCode = 200, IntToStr(R.StatusCode));
+  Check('body is not empty (the whole point — it used to be)',
+    R.Body <> '', Format('len=%d', [Length(R.Body)]));
+  Check('body matches the bytes the handler sent',
+    R.Body = 'BODYBYTES-OK-0123456789', R.Body);
+  DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
+  Check('pool healthy after Send(TBytes)',
+    (R.StatusCode = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.StatusCode, R.Body]));
+
 end;
 
 // ── Entry point ───────────────────────────────────────────────────────────────

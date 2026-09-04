@@ -504,6 +504,24 @@ begin
     end
   );
 
+  // ── FIX-BODYBYTES-1: Res.Send(TBytes) must actually reach the client ────────
+  // Horse core's Send(TBytes) writes the shadow slot FCSBodyBytes (public
+  // property BodyBytes). TResponseBridge.WriteBody never read it, so this
+  // returned 200 with Content-Length: 0 — no exception, no log, nothing to
+  // notice. The response simply arrived empty.
+  //
+  // The payload is ASCII on purpose: the failure being tested is "the slot is
+  // never read", so an exact string compare is the clearest assertion, and
+  // binary bytes would be mangled by the test client's string-typed body.
+  // Byte fidelity through this path is already covered by the stream tests.
+  THorse.Get('/body/bytes',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('application/octet-stream');
+      Res.Send(TEncoding.UTF8.GetBytes('BODYBYTES-OK-0123456789'));
+    end
+  );
+
   // ── FIX-BINBODY-1: a binary request body must not abort the request ──────────
   // A body of arbitrary bytes (0..255) is deliberately NOT valid UTF-8.  Before
   // FIX-BINBODY-1 both text accessors decoded the raw body eagerly with
@@ -534,6 +552,7 @@ begin
     var
       LText:   string;
       LRaw:    string;
+      LRawReq: TWebRequest;
       LStream: TStream;
       LBytes:  TBytes;
       I:       Integer;
@@ -541,8 +560,14 @@ begin
       LSize:   Integer;
     begin
       LText := Req.Body;                    // site 1 — must not raise
-      if Assigned(Req.RawWebRequest) then
-        LRaw := Req.RawWebRequest.Content   // site 2 — must not raise
+
+      // RawWebRequest is a property GETTER, i.e. an rvalue, and Assigned()
+      // demands a variable — passing it directly is E2036 "Variable required".
+      // Capture it first, then test with <> nil. Same pattern as the
+      // /raw/webrequest route above.
+      LRawReq := Req.RawWebRequest;
+      if LRawReq <> nil then
+        LRaw := LRawReq.Content             // site 2 — must not raise
       else
         LRaw := '';
 
