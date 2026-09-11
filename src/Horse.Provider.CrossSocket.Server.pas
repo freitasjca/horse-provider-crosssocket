@@ -34,10 +34,15 @@
       AddCACertificate → SSL_CTX_add_client_CA + X509_STORE_add_cert
       SetVerifyPeer    → SSL_CTX_set_verify(SSL_VERIFY_PEER
                            or SSL_VERIFY_FAIL_IF_NO_PEER_CERT) / SSL_VERIFY_NONE
-    ── TLSOPT-2 (PR #200 filed upstream 2026-08-29; freitasjca/DCS ≥1.0.8) ─────
-    procedure SetCipherList(const ACipherList: string)
-      → SSL_CTX_set_cipher_list (TLS 1.2 cipher override; requires DCS ≥1.0.8
-         or winddriver upstream after PR #200 merges)
+    ── TLSOPT-2 (upstream API since winddriver bb85ab4, 2026-09-06) ───────────
+    procedure SetTls12CipherSuites(const ACipherRules: string)
+      → SSL_CTX_set_cipher_list (TLS 1.2 and below)
+    procedure SetTls13CipherSuites(const ACipherSuites: string)
+      → SSL_CTX_set_ciphersuites (TLS 1.3; not yet surfaced by this provider)
+      Both invalidate the TLS configuration on failure, so a rejected cipher
+      string cannot leave a half-configured context serving.
+      PR #200 proposed a single fork-only SetCipherList and was CLOSED in
+      favour of this pair — one method cannot express both grammars.
 
   TCrossServer (Net.CrossServer.pas):
     procedure Start(const ACallback: TCrossListenCallback = nil)
@@ -66,11 +71,16 @@
     SSLCACertFile    → FServer.AddCACertificateFile     (mTLS; upstream API)
     SSLVerifyPeer    → FServer.SetVerifyPeer             (mTLS; upstream API)
     SSLKeyPassword   → passed as APassword to SetPrivateKeyFile (upstream API)
-    SSLCipherList    → FServer.SetCipherList             (TLSOPT-2; DCS ≥1.0.8)
+    SSLCipherList    → FServer.SetTls12CipherSuites      (TLSOPT-2; DCS ≥1.0.11)
 
-  SetCipherList requires freitasjca/Delphi-Cross-Socket ≥1.0.8, or winddriver
-  upstream after PR #200 merges. Raises ESsl if ACipherList has no matching
-  ciphers.
+  SetTls12CipherSuites requires Delphi-Cross-Socket ≥1.0.11 (the release that
+  merges winddriver bb85ab4). It raises ESslContextInvalid if the string
+  selects no ciphers, and marks the TLS configuration invalid so the socket
+  must be rebuilt rather than silently continuing.
+
+  The config field keeps the name SSLCipherList: it is this provider's own
+  option name and is unaffected by the DCS method rename. TLS 1.3 suites need
+  SetTls13CipherSuites and a separate config field — not yet surfaced.
 
   Reserved (CrossSocket API not available):
     KeepAliveTimeout — no matching property confirmed in TCrossHttpServer
@@ -319,10 +329,22 @@ begin
     FServer.SetVerifyPeer(FConfig.SSLVerifyPeer);
 
     // ── [TLSOPT-2] Override the TLS 1.2 cipher list ───────────────────────
-    // SetCipherList calls SSL_CTX_set_cipher_list and raises if the string
-    // selects no ciphers. Empty → keep CrossSocket's built-in modern default.
+    // SetTls12CipherSuites calls SSL_CTX_set_cipher_list, and on failure marks
+    // the whole TLS configuration invalid so a half-configured context cannot
+    // go on serving. Empty → keep CrossSocket's built-in modern default.
+    //
+    // Was FServer.SetCipherList, the fork-only method our PR #200 proposed.
+    // Upstream shipped SetTls12CipherSuites/SetTls13CipherSuites instead
+    // (winddriver bb85ab4) and closed #200; SetCipherList survives only as a
+    // deprecated delegation. Calling the upstream name directly is what lets
+    // that delegation be deleted, and it is also the stricter implementation.
+    //
+    // TLS 1.3 suites are configured through a SEPARATE call
+    // (SetTls13CipherSuites / SSL_CTX_set_ciphersuites) — SSL_CTX_set_cipher_list
+    // does not affect them. Exposing that is a follow-up: it needs its own
+    // config field, since one string cannot carry both grammars.
     if FConfig.SSLCipherList <> '' then
-      FServer.SetCipherList(FConfig.SSLCipherList);
+      FServer.SetTls12CipherSuites(FConfig.SSLCipherList);
   end;
 end;
 
