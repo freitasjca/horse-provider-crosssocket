@@ -100,3 +100,6 @@ samples/bench/bin/
 samples/bench/bench-results-linux-*.md
 
 *.buildlog
+
+# Delphi IDE editor session state (cursor positions, open views)
+*.dsv
