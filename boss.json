@@ -8,7 +8,7 @@
   "browsingpath": "src/",
   "projects": [],
   "dependencies": {
-    "github.com/HashLoad/horse": ">=3.3.0",
+    "github.com/HashLoad/horse": ">=3.3.3",
     "github.com/freitasjca/Delphi-Cross-Socket": ">=1.0.10"
   }
 }
