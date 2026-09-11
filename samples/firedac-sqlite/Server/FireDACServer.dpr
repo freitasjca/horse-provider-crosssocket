@@ -34,14 +34,19 @@
 //    Res.Download(S,N,C) identical, but Content-Disposition: attachment.
 //                        Same ownership rule — caller frees.
 //    Res.Render(S,N)     identical, inline, content type inferred from N.
-//    Res.Send<TStream>   DOES NOT WORK on any released Horse. It stores the
-//                        stream in FContent, which no provider bridge reads, so
-//                        the client receives Content-Length: 0 and no error.
-//                        The fix (DoSendStream) is merged to HashLoad/horse
-//                        master as PR #540 but is in no released tag, and Boss
-//                        installs by tag. Use SendFile/Download until a release
-//                        ships it. Note the ownership contracts are opposite:
-//                        Send<TStream> takes ownership, SendFile does not.
+//    Res.Send<TStream>   works on Horse >= 3.3.3 (released 2026-09-04, which
+//                        shipped DoSendStream from PR #540). On 3.3.2 and
+//                        earlier it stores the stream in FContent, which no
+//                        provider bridge reads, so the client gets
+//                        Content-Length: 0 and no error at all.
+//
+//                        This demo deliberately uses SendFile anyway, so it
+//                        runs on any Horse >= 3.3.0. If you target >= 3.3.3
+//                        you may prefer Send<TStream> — but note the ownership
+//                        contracts are OPPOSITE: Send<TStream> takes ownership
+//                        and frees your stream, SendFile does not and you must
+//                        free it yourself. Swapping one for the other without
+//                        moving the Free is a double-free or a leak.
 //
 //  ── Key patterns encoded here ────────────────────────────────────────────
 //  • Req.Body<TStream> is a NON-OWNING reference into CrossSocket's socket
@@ -52,8 +57,8 @@
 //  • Use Res.SendFile(S, '', ContentType) to send binary streams.  SendFile
 //    copies S into an owned internal buffer and sets Content-Type.  The caller
 //    retains ownership of S and MUST free it after SendFile returns.
-//    Res.Send<TStream> is not used here: Horse <=3.3.0 (what Boss installs)
-//    stores it in FContent, invisible to the CrossSocket bridge → empty body.
+//    SendFile is used here rather than Res.Send<TStream> so the demo runs on
+//    any Horse >= 3.3.0; Send<TStream> needs >= 3.3.3 and frees your stream.
 //  • CrossSocket IOCP/epoll worker threads have no COM apartment.
 //    FireDAC sfXML uses MSXML (COM) — call CoInitialize/CoUninitialize
 //    inside any handler that uses sfXML.  sfBinary and sfJSON use pure
@@ -194,8 +199,8 @@ begin
 
   WriteLn('[GET /items] ', LRowCount, ' row(s), ', LSize, ' bytes');
   { SendFile copies LStream into an owned FCSContentStream and sets Content-Type.
-    The caller retains ownership of LStream and MUST free it — unlike Send<TStream>
-    which transfers ownership but requires Horse > 3.3.0 (DoSendStream). }
+    The caller retains ownership of LStream and MUST free it — unlike
+    Send<TStream>, which takes ownership and frees it for you (Horse >= 3.3.3). }
   Res.SendFile(LStream, '', 'application/octet-stream');
   FreeAndNil(LStream);
 end;
@@ -237,8 +242,10 @@ begin
     LObj.AddPair('name',  LQ.FieldByName('name').AsString);
     LObj.AddPair('value', TJSONNumber.Create(LQ.FieldByName('value').AsFloat));
     WriteLn('[GET /items/', LId, '] found');
-    { Send<T> in Horse <=3.3.0 stores in FContent (not visible to the bridge).
-      Serialize here so Res.Send(string) sets FCSBody — the bridge always sees it. }
+    { Send<T> with a TJSONObject stores it in FContent, which the CrossSocket
+      bridge does not read — that slot is for content-type middleware. Serialize
+      here so Res.Send(string) sets FCSBody, which the bridge always reads.
+      (Unrelated to DoSendStream: that fixed the TStream overload, not TObject.) }
     Res.ContentType('application/json');
     Res.Send(LObj.ToJSON);
     FreeAndNil(LObj);
