@@ -63,6 +63,13 @@ program HorseCSTestClient;
     36  GET    /stream/pull  ×2 concurrent    → both 200, both complete bodies,
                                                 no cross-drain corruption, pool healthy
                                                 (PATCH-STREAM-1 deferred release isolation)
+    37  POST   /body/binary                   → 200, size 256, sum 32640 (FIX-BINBODY-1)
+    38  GET    /body/bytes                    → 200, body = bytes sent (FIX-BODYBYTES-1)
+
+  Server-side failure counter (FIX-WP-ERRCOUNT) — brackets the whole run:
+    00  GET    /diag/failed-tasks             → baseline count for this run
+    39  GET    /diag/raise                    → 500 generic body, counter +1 exactly
+    40  GET    /diag/failed-tasks             → delta = 1 (only 39's raise); MUST stay last
 *)
 
 uses
@@ -83,6 +90,7 @@ const
   CONCURRENT_COUNT    = 4;     // parallel requests in test 18
   BURST_COUNT         = 8;     // parallel requests in test 29
   RAPID_SEQ_COUNT     = 5;     // sequential requests in test 30
+  DIAG_RAISE_MARKER   = 'DIAG-RAISE-DELIBERATE'; // must match server constant
 
 // ── Global counters & timing ──────────────────────────────────────────────────
 
@@ -341,6 +349,35 @@ end;
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 
+{ [FIX-WP-ERRCOUNT] GET /diag/failed-tasks and parse the "failedTasks":N field.
+  Returns False on any status other than 200 or an unparseable body; ACount is
+  then -1 and AStatus holds what came back (501 = no counter on this transport). }
+function ReadFailedTasks(const AClient: TCrossHttpClient;
+  out ACount: Integer; out AStatus: Integer): Boolean;
+const
+  KEY = '"failedTasks":';
+var
+  R:    TReqResult;
+  LPos: Integer;
+  LEnd: Integer;
+begin
+  Result := False;
+  ACount := -1;
+  DoSync(AClient, 'GET', BASE_URL + '/diag/failed-tasks', nil, nil, R);
+  AStatus := R.StatusCode;
+  if R.StatusCode <> 200 then
+    Exit;
+  LPos := Pos(KEY, R.Body);
+  if LPos = 0 then
+    Exit;
+  LPos := LPos + Length(KEY);
+  LEnd := LPos;
+  while (LEnd <= Length(R.Body)) and CharInSet(R.Body[LEnd], ['0'..'9']) do
+    Inc(LEnd);
+  ACount := StrToIntDef(Copy(R.Body, LPos, LEnd - LPos), -1);
+  Result := ACount >= 0;
+end;
+
 procedure RunTests(const AClient: TCrossHttpClient);
 var
   R:              TReqResult;
@@ -372,6 +409,13 @@ var
   LStreamAllBody: Boolean;
   // Test 37 — binary request body (FIX-BINBODY-1)
   LBinBody:       TBytes;
+  // Tests 00 / 39 / 40 — server-side failure counter (FIX-WP-ERRCOUNT)
+  LDiagSupported: Boolean;
+  LDiagOk:        Boolean;
+  LDiagStatus:    Integer;
+  LFailedBase:    Integer;
+  LFailedBefore:  Integer;
+  LFailedAfter:   Integer;
 
   { Section header. Prints the elapsed wall-clock time since the previous
     Section call so a slow test stands out without having to compare
@@ -452,6 +496,25 @@ var
   end;
 
 begin
+  // ── 00  Server-side failure counter — baseline ──────────────────────────────
+  // [FIX-WP-ERRCOUNT] The server counts every exception that escapes into the
+  // provider's request-level catch (500 to the client; before the counter,
+  // only a "Task #0" line on the SERVER console). The count is cumulative since
+  // server start, so this records a baseline and test 40 asserts the delta.
+  // That keeps repeated client runs against ONE server instance independent,
+  // which is exactly how the intermittent AV is reproduced.
+  // 501 = transport with no worker pool (Indy build): 39/40 are SKIPPED loudly.
+  // A skip is not a pass, and is not counted as one.
+  Section('00  GET /diag/failed-tasks  (baseline for this run)');
+  LDiagSupported := ReadFailedTasks(AClient, LFailedBase, LDiagStatus);
+  if LDiagStatus = 501 then
+    Writeln('  SKIP  no failure counter on this transport - tests 39/40 will not run')
+  else
+  begin
+    Check('status 200', LDiagStatus = 200, IntToStr(LDiagStatus));
+    Check('failedTasks parsed', LDiagSupported, IntToStr(LFailedBase));
+  end;
+
   // ── 01  Health check ─────────────────────────────────────────────────────────
   Section('01  GET /ping');
   DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
@@ -1142,6 +1205,59 @@ begin
   Check('pool healthy after Send(TBytes)',
     (R.StatusCode = 200) and (R.Body = 'pong'),
     Format('%d / %s', [R.StatusCode, R.Body]));
+
+  // ── 39  Escaped exception is COUNTED — FIX-WP-ERRCOUNT ───────────────────────
+  // Validates the counter deterministically instead of waiting for the
+  // ~4-in-10 AV to exercise it. The server raises from an onRequest hook, not a
+  // route: Horse's TNextCaller catches route exceptions itself and never
+  // re-raises, so a route-level raise could not reach the provider.
+  //
+  // The body check is what proves WHICH catch handled it. The provider sends
+  // {"error":"Internal Server Error"}; Horse's own catch would send
+  // "Internal Application Error: <message>". Status 500 alone cannot tell the
+  // two apart — and only the provider's path increments the counter.
+  Section('39  GET /diag/raise  (FIX-WP-ERRCOUNT - escaped exception is counted)');
+  if not LDiagSupported then
+    Writeln('  SKIP  failure counter unavailable - see test 00')
+  else
+  begin
+    ReadFailedTasks(AClient, LFailedBefore, LDiagStatus);
+    DoSync(AClient, 'GET', BASE_URL + '/diag/raise', nil, nil, R);
+    Check('status 500', R.StatusCode = 500, IntToStr(R.StatusCode) + ' / ' + R.Body);
+    Check('handled by the provider catch, not Horse''s route catch',
+      (Pos('"error":"Internal Server Error"', R.Body) > 0)
+        and (Pos('Internal Application Error', R.Body) = 0),
+      R.Body);
+    Check('exception message not leaked to the client (SEC-31)',
+      Pos(DIAG_RAISE_MARKER, R.Body) = 0, R.Body);
+    ReadFailedTasks(AClient, LFailedAfter, LDiagStatus);
+    Check('FailedTasks incremented by exactly 1',
+      (LFailedBefore >= 0) and (LFailedAfter = LFailedBefore + 1),
+      Format('before=%d after=%d', [LFailedBefore, LFailedAfter]));
+    DoSync(AClient, 'GET', BASE_URL + '/ping', nil, nil, R);
+    Check('pool healthy after escaped exception',
+      (R.StatusCode = 200) and (R.Body = 'pong'),
+      Format('%d / %s', [R.StatusCode, R.Body]));
+  end;
+
+  // ── 40  No unexpected server-side failures this run — MUST STAY LAST ─────────
+  // The gate this suite was missing. Expected delta is exactly 1: test 39's
+  // deliberate raise. Anything more is a real 500 from an exception escaping
+  // into the provider during some earlier test — whose own status check did
+  // not catch it. The server console names it on a "[HorseWorkerPool] Task #N
+  // raised ..." line. Keep this the final section so it covers every request.
+  Section('40  GET /diag/failed-tasks  (no unexpected server-side failures this run)');
+  if not LDiagSupported then
+    Writeln('  SKIP  failure counter unavailable - see test 00')
+  else
+  begin
+    LDiagOk := ReadFailedTasks(AClient, LFailedAfter, LDiagStatus);
+    Check('failedTasks readable', LDiagOk, IntToStr(LDiagStatus));
+    Check('no unexpected server-side failures (delta = 1, the deliberate raise in 39)',
+      LDiagOk and (LFailedAfter - LFailedBase = 1),
+      Format('baseline=%d final=%d delta=%d - see server console for "Task #" lines',
+        [LFailedBase, LFailedAfter, LFailedAfter - LFailedBase]));
+  end;
 
 end;
 
