@@ -75,8 +75,11 @@
              In Delphi, invoking a property whose type is a proc reference
              requires assigning it to a local variable first; calling the
              property directly is E2036 "Variable required".
-             Fix: local 'ErrorHandler: TWorkerErrorProc' copies the property
-             before the call.
+             Fix was a local 'ErrorHandler: TWorkerErrorProc' copying the
+             property before the call. SUPERSEDED by FIX-WP-ERRCOUNT: this
+             unit now calls WorkerPool.ReportError, a plain method, so the
+             property is never invoked from here and the local is gone. The
+             E2036 rule still applies to any NEW direct property call.
 
   [FIX-CS-5] SendBytes undeclared (E2003).
              ICrossHttpResponse has no SendBytes method.  The correct overload
@@ -373,8 +376,6 @@ var
   Ctx:          THorseContext;
   ValResult:    TRequestValidationResult;
   RejectReason: string;
-  // [FIX-CS-4] local copy of the proc-reference property avoids E2036
-  ErrorHandler: TWorkerErrorProc;
   // [FIX-CS-4b] local to avoid passing a function-call rvalue to Assigned(var)
   WorkerPool:   THorseWorkerPool;
   Banner:       string;
@@ -451,12 +452,17 @@ begin
           // [SEC-31] Log internally — NEVER leak stack or detail to client
           WorkerPool := THorseWorkerPool.Instance;
           if Assigned(WorkerPool) then
-          begin
-            // [FIX-CS-4] copy proc-reference property to a local before invoking
-            ErrorHandler := WorkerPool.OnTaskError;
-            if Assigned(ErrorHandler) then
-              ErrorHandler(E, 0);
-          end;
+            // [FIX-WP-ERRCOUNT] ReportError, not OnTaskError directly: this
+            // path returns 500 to the client, and before the counter existed
+            // it left no trace a test could assert on. samples/tests reported
+            // "110 passed, 0 failed" while ~4 runs in 10 raised an
+            // EAccessViolation here and 500'd the request.
+            //
+            // Task index 0 is reserved for this request-path handler. The
+            // worker loop's own indices start at 1 (TInterlocked.Increment
+            // returns the NEW value), so a "Task #0" line always means an
+            // exception escaped a Horse handler -- not a pool task.
+            WorkerPool.ReportError(E, 0);
           Ctx.Response.Status(THTTPStatus.InternalServerError);
           Ctx.Response.Send('{"error":"Internal Server Error"}');
           Ctx.Response.ContentType('application/json; charset=utf-8');
