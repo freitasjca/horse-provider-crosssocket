@@ -2,7 +2,7 @@
 
 {$APPTYPE CONSOLE}
 
-{
+(*
   Horse + CrossSocket  —  Integration Test Server
   ================================================
   Destination: horse-provider-crosssocket/samples/tests/HorseCSTestServer.dpr
@@ -41,7 +41,11 @@
     GET    /stream/pull                 chunked streaming via Res.SendChunked — pull model (PATCH-STREAM-1)
     GET    /stream/content-type         SendChunked Content-Type propagation probe (PATCH-STREAM-1)
     GET    /stream/empty                zero-chunk producer edge case — 200 + empty body (PATCH-STREAM-1)
-}
+    POST   /body/binary                 arbitrary bytes 0..255 reach the handler intact (FIX-BINBODY-1)
+    GET    /body/bytes                  Res.Send(TBytes) body reaches the wire (FIX-BODYBYTES-1)
+    GET    /diag/raise                  onRequest hook raises → provider's escaped-exception path (FIX-WP-ERRCOUNT)
+    GET    /diag/failed-tasks           JSON "failedTasks":N — errors counted since server start (FIX-WP-ERRCOUNT)
+*)
 
 uses
   System.SysUtils,
@@ -60,6 +64,7 @@ uses
 const
   TEST_PORT           = 9010;
   LARGE_RESPONSE_SIZE = 65536; // bytes, must match client constant
+  DIAG_RAISE_MARKER   = 'DIAG-RAISE-DELIBERATE'; // must match client constant
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -590,6 +595,74 @@ begin
            [LSize, LSum, Length(LText), Length(LRaw)]));
     end
   );
+
+  // ── FIX-WP-ERRCOUNT: server-side failure counter ────────────────────────────
+  // The provider's request-level catch (ExecutePipeline, `on E: Exception`)
+  // returns 500 and calls THorseWorkerPool.ReportError, which counts. Before the
+  // counter it only printed "[HorseWorkerPool] Task #0 raised ..." on this
+  // console, so the client reported all tests passed while ~4 runs in 10 hit an
+  // EAccessViolation on that path.
+{$IFDEF HORSE_CROSSSOCKET}
+  // /diag/raise — reach that catch DELIBERATELY, so the counter is validated
+  // without waiting for the intermittent AV.
+  //
+  // The raise MUST come from an onRequest hook, not a route handler. Horse's
+  // TNextCaller wraps every route and middleware callback in try/except and,
+  // with no OnError registered, replies "Internal Application Error: <msg>"
+  // and exits WITHOUT re-raising — a raise in a route never reaches the
+  // provider and cannot move the counter. Hooks run in
+  // THorseLifecycleExecutor.Next, which has no try/except, and
+  // THorseRouterTree.Execute re-raises when HasOnError is False. That is the
+  // same escape path the AV takes, which also means the AV itself is NOT in a
+  // route handler: it is in Horse's routing/adapter code around them.
+  //
+  // Side effect, deliberate and worth knowing when comparing AV rates: with a
+  // hook registered, EVERY request now goes through THorseLifecycleExecutor
+  // (FOnRequest was nil before, so ExecuteOnRequest called straight through).
+  // If the AV rate moves after this change, this hook is the first suspect.
+  THorse.AddOnRequest(
+    procedure(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc)
+    begin
+      if SameText(AReq.PathInfo, '/diag/raise') then
+        raise Exception.Create(DIAG_RAISE_MARKER);
+      ANext();
+    end
+  );
+
+  // Reached only if the hook above did NOT fire. Answering 200 makes that
+  // failure explicit in the client instead of a confusing 404.
+  THorse.Get('/diag/raise',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('application/json; charset=utf-8')
+         .Send('{"raised":false,"error":"onRequest hook did not fire"}');
+    end
+  );
+
+  // Cumulative since server start. The client records a baseline and asserts
+  // the delta, so repeated client runs against one server stay independent.
+  THorse.Get('/diag/failed-tasks',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    var
+      LPool: THorseWorkerPool;
+    begin
+      LPool := THorseWorkerPool.Instance;
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(Format('{"failedTasks":%d}', [LPool.FailedTasks]));
+    end
+  );
+{$ELSE}
+  // No worker pool, hence no counter, on the Indy transport. 501 tells the
+  // client to SKIP the counter tests loudly rather than fail or silently pass.
+  THorse.Get('/diag/failed-tasks',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('application/json; charset=utf-8')
+         .Status(501)
+         .Send('{"error":"no worker pool on this transport"}');
+    end
+  );
+{$ENDIF}
 
 end;
 
