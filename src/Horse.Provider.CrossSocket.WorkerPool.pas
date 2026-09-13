@@ -91,6 +91,8 @@ type
     FRunningTasks:  Integer;
     FTaskIndex:     Int64;
     FOnTaskError:   TWorkerErrorProc;
+    // [FIX-WP-ERRCOUNT] Errors reported since startup. See ReportError.
+    FFailedTasks:   Integer;
 
     procedure SpawnThread(AIndex: Integer);
     procedure WorkerLoop(AThreadIdx: Integer);
@@ -108,6 +110,24 @@ type
     procedure Submit(ATask: TWorkerTask);
 
     property OnTaskError: TWorkerErrorProc read FOnTaskError write FOnTaskError;
+
+    { [FIX-WP-ERRCOUNT] Report an error AND count it.
+
+      Every caller must use this rather than invoking OnTaskError directly,
+      because the handler only PRINTS. Before this existed, a failing task or a
+      500-ing request wrote one line to ErrOutput and nothing recorded it, so
+      samples/tests reported "110 passed, 0 failed" while the server was
+      raising EAccessViolation on roughly 4 runs in 10. A failure that only
+      prints is a failure that does not count.
+
+      Thread-safe: called from worker threads and from CrossSocket IO threads.
+      Assigning a custom OnTaskError does NOT disable counting -- the increment
+      happens here, not in the handler. }
+    procedure ReportError(const E: Exception; ATaskIndex: Int64);
+
+    { Errors reported since startup. A test asserting this is zero is the
+      cheapest guard against a silently failing request path. }
+    property FailedTasks: Integer read FFailedTasks;
 
     class function  Instance: THorseWorkerPool;
     class procedure Initialize(
@@ -177,6 +197,7 @@ begin
   FThreadCount  := 0;
   FRunningTasks := 0;
   FTaskIndex    := 0;
+  FFailedTasks  := 0;
 
   FOnTaskError :=
     procedure(const E: Exception; ATaskIndex: Int64)
@@ -273,6 +294,26 @@ begin
   T.Start;
 end;
 
+{ [FIX-WP-ERRCOUNT] Count first, then report. The count is what a test can
+  assert; the handler is only a log line and may be replaced by the consumer.
+  Uses the same guarded interlocked form as TaskStarted/TaskFinished below --
+  FPC exposes InterlockedIncrement, Delphi TInterlocked. }
+procedure THorseWorkerPool.ReportError(const E: Exception; ATaskIndex: Int64);
+var
+  LHandler: TWorkerErrorProc;
+begin
+  {$IF DEFINED(FPC)}
+  InterlockedIncrement(FFailedTasks);
+  {$ELSE}
+  TInterlocked.Increment(FFailedTasks);
+  {$ENDIF}
+
+  // [FIX-CS-4] copy the proc-reference property to a local before invoking
+  LHandler := FOnTaskError;
+  if Assigned(LHandler) then
+    LHandler(E, ATaskIndex);
+end;
+
 procedure THorseWorkerPool.TaskStarted;
 begin
   {$IF DEFINED(FPC)}
@@ -333,8 +374,9 @@ begin
           Task.Execute;
         except
           on E: Exception do
-            if Assigned(FOnTaskError) then
-              FOnTaskError(E, TaskIdx);
+            // [FIX-WP-ERRCOUNT] via ReportError so the failure is COUNTED,
+            // not merely printed.
+            ReportError(E, TaskIdx);
         end;
       finally
         Task := nil;  // release interface ref before TaskFinished
