@@ -81,6 +81,40 @@ begin
   if B then Result := 'true' else Result := 'false';
 end;
 
+// [FIX-DECODE-ONCE-1] Read field "v" three ways and report each as JSON.
+// Field is read FIRST: it reads the dictionary directly, so it always shows
+// the value exactly as stored. The two indexed reads that follow show what
+// THorseCoreParam does to it -- and the second one sees whatever the first
+// wrote back. Each read catches its own exception, so one failing accessor
+// cannot hide what the others return.
+function DecodeReport(const AParam: THorseCoreParam): string;
+var
+  LField: string;
+  LGet:   string;
+  LAgain: string;
+begin
+  try
+    LField := AParam.Field('v').AsString;
+  except
+    on E: Exception do
+      LField := 'EXCEPTION ' + E.ClassName + ': ' + E.Message;
+  end;
+  try
+    LGet := AParam['v'];
+  except
+    on E: Exception do
+      LGet := 'EXCEPTION ' + E.ClassName + ': ' + E.Message;
+  end;
+  try
+    LAgain := AParam['v'];
+  except
+    on E: Exception do
+      LAgain := 'EXCEPTION ' + E.ClassName + ': ' + E.Message;
+  end;
+  Result := '{"field":"' + JE(LField) + '","get":"' + JE(LGet)
+    + '","again":"' + JE(LAgain) + '"}';
+end;
+
 // ── Route registration ────────────────────────────────────────────────────────
 
 procedure RegisterRoutes;
@@ -593,6 +627,35 @@ begin
       Res.ContentType('application/json; charset=utf-8')
          .Send(Format('{"size":%d,"sum":%d,"textLen":%d,"rawLen":%d}',
            [LSize, LSum, Length(LText), Length(LRaw)]));
+    end
+  );
+
+  // ── FIX-DECODE-ONCE-1: query / form values are URL-decoded exactly once ─────
+  // User report: intermittent HTTP 500 "Error decoding URL style (%XX) encoded
+  // string at position 30". Delphi-Cross-Socket already decodes the query
+  // string and application/x-www-form-urlencoded bodies, and the bridge stores
+  // those DECODED values. Horse >= 3.3.0 then ran DecodeParam
+  // (TNetEncoding.URL.Decode) on every indexed read -- a second decode -- and
+  // wrote the result back, so a repeated read decoded yet again. On a value
+  // that contains a percent sign once decoded:
+  //   100%25    -> EConvertError "Error decoding URL style (%XX) ... position 4"
+  //   50%25off  -> EConvertError "Invalid URL encoded character (%of) at position 3"
+  // (The position counts from just past the percent sign. Observed on Windows.)
+  //   a%2B%2541 -> no error, silently "a A" instead of "a+%41"
+  // DecodeParam skips values with no percent sign, which is why it is rare.
+  THorse.Get('/params/decode',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(DecodeReport(Req.Query));
+    end
+  );
+
+  THorse.Put('/params/decode-form',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(DecodeReport(Req.ContentFields));
     end
   );
 

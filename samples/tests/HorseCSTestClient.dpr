@@ -378,6 +378,35 @@ begin
   Result := ACount >= 0;
 end;
 
+// [FIX-DECODE-ONCE-1] Extract the string value of AKey from the flat JSON
+// object the test server's DecodeReport builds. Undoes only the two escapes
+// the server's JE helper emits (backslash and double quote). Returns
+// '<missing>' when the key is absent, so a failed check shows why.
+function JsonField(const ABody, AKey: string): string;
+var
+  LPos: Integer;
+  LCh:  Char;
+begin
+  Result := '';
+  LPos := Pos('"' + AKey + '":"', ABody);
+  if LPos = 0 then
+    Exit('<missing>');
+  LPos := LPos + Length(AKey) + 4;
+  while LPos <= Length(ABody) do
+  begin
+    LCh := ABody[LPos];
+    if LCh = '"' then
+      Exit;
+    if (LCh = '\') and (LPos < Length(ABody)) then
+    begin
+      Inc(LPos);
+      LCh := ABody[LPos];
+    end;
+    Result := Result + LCh;
+    Inc(LPos);
+  end;
+end;
+
 procedure RunTests(const AClient: TCrossHttpClient);
 var
   R:              TReqResult;
@@ -493,6 +522,42 @@ var
         end;
         LStreamBatch[AIdx].Event.SetEvent;
       end);
+  end;
+
+  // ── Tests 41-45 helper — one URL-decode case (FIX-DECODE-ONCE-1) ─────────────
+  // Sends the request, then asserts that Field, the first indexed read and a
+  // repeated indexed read ALL return the once-decoded value. ABody = '' sends
+  // no body; otherwise it is sent as application/x-www-form-urlencoded.
+  procedure CheckDecodeCase(const ATitle, AMethod, AUrl, ABody, AExpected: string);
+  var
+    LDecHeaders: THttpHeader;
+    LGot:        string;
+  begin
+    Section(ATitle);
+    if ABody = '' then
+      DoSync(AClient, AMethod, AUrl, nil, nil, R)
+    else
+    begin
+      LDecHeaders := THttpHeader.Create;
+      try
+        LDecHeaders['Content-Type'] := 'application/x-www-form-urlencoded';
+        DoSync(AClient, AMethod, AUrl, LDecHeaders,
+          TEncoding.UTF8.GetBytes(ABody), R);
+      finally
+        LDecHeaders.Free;
+      end;
+    end;
+    Check('status 200', R.StatusCode = 200,
+      IntToStr(R.StatusCode) + ' / ' + R.Body);
+    LGot := JsonField(R.Body, 'field');
+    Check('Field(v).AsString = the once-decoded value (what the bridge stored)',
+      LGot = AExpected, 'got "' + LGot + '" expected "' + AExpected + '"');
+    LGot := JsonField(R.Body, 'get');
+    Check('indexed read [v] decoded exactly once',
+      LGot = AExpected, 'got "' + LGot + '" expected "' + AExpected + '"');
+    LGot := JsonField(R.Body, 'again');
+    Check('repeated indexed read [v] still decoded exactly once',
+      LGot = AExpected, 'got "' + LGot + '" expected "' + AExpected + '"');
   end;
 
 begin
@@ -1205,6 +1270,29 @@ begin
   Check('pool healthy after Send(TBytes)',
     (R.StatusCode = 200) and (R.Body = 'pong'),
     Format('%d / %s', [R.StatusCode, R.Body]));
+
+  // ── 41-45  Query / form values are URL-decoded exactly once ─────────────────
+  // [FIX-DECODE-ONCE-1] Regression for a user report: intermittent HTTP 500
+  // "Error decoding URL style (%XX) encoded string at position 30". Numbered
+  // 41-45 but run BEFORE 39/40, because 40 must remain the final section.
+  //
+  // Expected on an UNFIXED Horse: 131 passed, 8 failed -- both indexed-read
+  // checks fail in 41, 42, 43 and 45; every Field check and all of 44 pass.
+  // A different count means the model of the bug is wrong: stop and look.
+  //
+  // URLs are fully percent-encoded on purpose. TCrossHttpClient decodes the
+  // query and re-encodes it with a strict unreserved set, so only canonical
+  // input survives that round trip byte-for-byte; a raw '+' would not.
+  CheckDecodeCase('41  GET /params/decode?v=100%25  (trailing percent - the reported message)',
+    'GET', BASE_URL + '/params/decode?v=100%25', '', '100%');
+  CheckDecodeCase('42  GET /params/decode?v=50%25off  (percent mid-value)',
+    'GET', BASE_URL + '/params/decode?v=50%25off', '', '50%off');
+  CheckDecodeCase('43  GET /params/decode?v=a%2B%2541  (silent corruption to "a A")',
+    'GET', BASE_URL + '/params/decode?v=a%2B%2541', '', 'a+%41');
+  CheckDecodeCase('44  GET /params/decode?v=caf%C3%A9  (UTF-8, no percent once decoded - control)',
+    'GET', BASE_URL + '/params/decode?v=caf%C3%A9', '', 'caf' + #$00E9);
+  CheckDecodeCase('45  PUT /params/decode-form  body v=100%25  (form-urlencoded - ContentFields)',
+    'PUT', BASE_URL + '/params/decode-form', 'v=100%25', '100%');
 
   // ── 39  Escaped exception is COUNTED — FIX-WP-ERRCOUNT ───────────────────────
   // Validates the counter deterministically instead of waiting for the
