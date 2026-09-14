@@ -9,9 +9,13 @@ REM    scripts\run-batch.bat [RUNS] [BIN_DIR]
 REM
 REM  Defaults: RUNS=10, BIN_DIR=repo-parent\bin\Win64\Release
 REM
-REM  Why: the worker-pool AV is intermittent, about 4 runs in 10, so a single
-REM  run proves nothing either way - a rate needs a batch. At the old rate the
-REM  chance of 10 green runs in a row is 0.6 to the power 10, about 0.6 percent.
+REM  Why: an intermittent fault needs a RATE - a single run proves nothing
+REM  either way. This batch is how the worker-pool AV on HEAD /methods/head was
+REM  pinned down; it hit 1 to 4 runs in 10 until FIX-HEAD-LOOP-1/2 and
+REM  FIX-CONN-NIL-1 on 2026-09-14, after which 50 runs in a row were green.
+REM  The expected result is now all GREEN, and any RED run is a regression.
+REM  One green batch is still weak evidence against a RARE fault: at a 1-in-10
+REM  rate, 10 green runs happen about 35 percent of the time, 20 about 12.
 REM
 REM  Model:
 REM    - ONE server instance for the whole batch, which is how the AV was
@@ -134,7 +138,7 @@ echo ============================================================
 echo  %RUNS% runs:  GREEN !GREEN!   RED !RED!
 echo ============================================================
 if !RED! GTR 0 echo  RED runs: the failing check names the test; the server window has a matching "Task #N raised" line naming the exception. Copy those lines before stopping the server.
-if !RED! EQU 0 echo  No red runs. At the old 4-in-10 rate, 10 green in a row is about 0.6 percent likely - check what changed. First suspect: the onRequest hook from PR #12 now routes every request through THorseLifecycleExecutor. Control: rebuild without it and rerun the batch.
+if !RED! EQU 0 echo  No red runs - the expected baseline since FIX-HEAD-LOOP-1/2 and FIX-CONN-NIL-1. One batch is weak evidence against a rare fault: at 1 in 10, 10 green runs happen about 35 percent of the time. To rule one out, pass a larger count, for example: run-batch.bat 30
 echo.
 echo  The server is still running in its own window. Press ENTER there to stop it.
 echo  Per-run logs: %LOG_DIR%
