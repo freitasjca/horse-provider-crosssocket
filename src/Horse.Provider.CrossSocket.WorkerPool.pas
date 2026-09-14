@@ -123,11 +123,20 @@ type
       Thread-safe: called from worker threads and from CrossSocket IO threads.
       Assigning a custom OnTaskError does NOT disable counting -- the increment
       happens here, not in the handler. }
-    procedure ReportError(const E: Exception; ATaskIndex: Int64);
+    // [FIX-WP-ERRCOUNT-CTX] AContext is a short description of what failed
+    // (e.g. "GET /stream/pull"). The handler can read it through ErrorContext
+    // for the duration of the call; the default handler appends it to its line.
+    procedure ReportError(const E: Exception; ATaskIndex: Int64;
+      const AContext: string = '');
 
     { Errors reported since startup. A test asserting this is zero is the
       cheapest guard against a silently failing request path. }
     property FailedTasks: Integer read FFailedTasks;
+
+    // [FIX-WP-ERRCOUNT-CTX] The AContext passed to ReportError, visible only on
+    // the reporting thread while OnTaskError runs; '' otherwise. Lets a custom
+    // OnTaskError log the same context the default handler does.
+    class function ErrorContext: string;
 
     class function  Instance: THorseWorkerPool;
     class procedure Initialize(
@@ -148,6 +157,12 @@ uses
 // ── Singleton ─────────────────────────────────────────────────────────────────
 var
   GHorseWorkerPool: THorseWorkerPool;
+
+// [FIX-WP-ERRCOUNT-CTX] Context of the handler call in progress on this thread.
+// Set and cleared by ReportError around the handler call, so the string never
+// outlives the call (thread variables are not finalized automatically).
+threadvar
+  GErrorContext: string;
 
 // ── TWorkerTaskWrapper ────────────────────────────────────────────────────────
 // Wraps a TWorkerTask (anonymous proc) in a named IWorkerTask interface so that
@@ -201,10 +216,17 @@ begin
 
   FOnTaskError :=
     procedure(const E: Exception; ATaskIndex: Int64)
+    var
+      LContext: string;
     begin
+      // [FIX-WP-ERRCOUNT-CTX] Name the failing request when the caller gave one,
+      // so a "Task #0" line says WHICH request escaped instead of only that one did.
+      LContext := THorseWorkerPool.ErrorContext;
+      if LContext <> '' then
+        LContext := '  (request: ' + LContext + ')';
       System.WriteLn(ErrOutput,
-        Format('[HorseWorkerPool] Task #%d raised %s: %s',
-               [ATaskIndex, E.ClassName, E.Message]));
+        Format('[HorseWorkerPool] Task #%d raised %s: %s%s',
+               [ATaskIndex, E.ClassName, E.Message, LContext]));
     end;
 
   for I := 0 to AMinThreads - 1 do
@@ -298,7 +320,8 @@ end;
   assert; the handler is only a log line and may be replaced by the consumer.
   Uses the same guarded interlocked form as TaskStarted/TaskFinished below --
   FPC exposes InterlockedIncrement, Delphi TInterlocked. }
-procedure THorseWorkerPool.ReportError(const E: Exception; ATaskIndex: Int64);
+procedure THorseWorkerPool.ReportError(const E: Exception; ATaskIndex: Int64;
+  const AContext: string);
 var
   LHandler: TWorkerErrorProc;
 begin
@@ -311,7 +334,22 @@ begin
   // [FIX-CS-4] copy the proc-reference property to a local before invoking
   LHandler := FOnTaskError;
   if Assigned(LHandler) then
-    LHandler(E, ATaskIndex);
+  begin
+    // [FIX-WP-ERRCOUNT-CTX] Publish the context only for this call. Keeping
+    // TWorkerErrorProc's signature unchanged means consumers who installed their
+    // own OnTaskError keep compiling; they can opt in through ErrorContext.
+    GErrorContext := AContext;
+    try
+      LHandler(E, ATaskIndex);
+    finally
+      GErrorContext := '';
+    end;
+  end;
+end;
+
+class function THorseWorkerPool.ErrorContext: string;
+begin
+  Result := GErrorContext;
 end;
 
 procedure THorseWorkerPool.TaskStarted;

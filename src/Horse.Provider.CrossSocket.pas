@@ -368,6 +368,33 @@ begin
 end;
 
 // ── ExecutePipeline ───────────────────────────────────────────────────────────
+// [FIX-WP-ERRCOUNT-CTX] "METHOD /path" for the Task #0 log line.
+// Read from the Delphi-Cross-Socket request, not Ctx.Request: the exception
+// being reported may itself have come from Horse's request objects. Path only,
+// because a query string can carry tokens. Control characters are replaced so
+// a decoded %0A cannot forge a log line, and the result is capped. Never raises:
+// it runs inside an exception handler.
+function RequestLogContext(const ACrossReq: ICrossHttpRequest): string;
+const
+  MAX_CONTEXT_LEN = 256;
+var
+  I: Integer;
+begin
+  Result := '';
+  try
+    if ACrossReq = nil then
+      Exit;
+    Result := ACrossReq.Method + ' ' + ACrossReq.Path;
+    if Length(Result) > MAX_CONTEXT_LEN then
+      Result := Copy(Result, 1, MAX_CONTEXT_LEN) + '...';
+    for I := 1 to Length(Result) do
+      if Ord(Result[I]) < 32 then
+        Result[I] := '?';
+  except
+    Result := '<request context unavailable>';
+  end;
+end;
+
 class procedure THorseProviderCrossSocket.ExecutePipeline(
   const ACrossReq: ICrossHttpRequest;
   const ACrossRes: ICrossHttpResponse
@@ -462,7 +489,12 @@ begin
             // worker loop's own indices start at 1 (TInterlocked.Increment
             // returns the NEW value), so a "Task #0" line always means an
             // exception escaped a Horse handler -- not a pool task.
-            WorkerPool.ReportError(E, 0);
+            //
+            // [FIX-WP-ERRCOUNT-CTX] The context names the request, so the log
+            // line says which one escaped. The intermittent AV at offset 43D183
+            // is invisible to every check except the counter -- this is what
+            // turns "it happened" into "it happened on GET /x".
+            WorkerPool.ReportError(E, 0, RequestLogContext(ACrossReq));
           Ctx.Response.Status(THTTPStatus.InternalServerError);
           Ctx.Response.Send('{"error":"Internal Server Error"}');
           Ctx.Response.ContentType('application/json; charset=utf-8');
