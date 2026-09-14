@@ -116,14 +116,37 @@ begin
     Result := FCrossReq.HostName;
 end;
 
+// [FIX-CONN-NIL-1] Connection is nil once the peer has disconnected: Delphi-
+// Cross-Socket's InternalClose clears request.FConnection without taking the
+// receive lock, so it can happen while Horse is still running this request.
+// THorseProviderAbstract.Execute reads ServerPort on every request, so an
+// unguarded .Connection.LocalPort there was a "Read of address 0" access
+// violation (it is what FIX-HEAD-LOOP-2's duplicate HEAD requests hit). Each
+// getter reads Connection once into a local (a counted reference) and
+// nil-checks that; reading the property twice could see it cleared in between.
 function TCrossSocketRawRequest.GetRemoteAddr: string;
+var
+  LConn: ICrossHttpConnection;
 begin
-  Result := FCrossReq.Connection.PeerAddr;
+  LConn := FCrossReq.Connection;
+  if Assigned(LConn) then
+    Result := LConn.PeerAddr
+  else
+    Result := '';
 end;
 
 function TCrossSocketRawRequest.GetServerPort: Integer;
+var
+  LConn: ICrossHttpConnection;
 begin
-  Result := FCrossReq.Connection.LocalPort;
+  LConn := FCrossReq.Connection;
+  if Assigned(LConn) then
+    Result := LConn.LocalPort
+  else
+    // HostPort comes from the Host header, or the server's listening port when
+    // the header has none; it was parsed before the connection went away. It is
+    // what Horse uses to pick the THorseInstance, so it must not be 0.
+    Result := FCrossReq.HostPort;
 end;
 
 function TCrossSocketRawRequest.GetContentType: string;

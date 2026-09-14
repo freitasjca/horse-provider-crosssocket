@@ -210,6 +210,7 @@ var
   RawUrl:  string;
   Path:    string;
   PeerAddr: string;
+  LConn:   ICrossHttpConnection;
 begin
   ARejectReason := '';
 
@@ -262,7 +263,17 @@ begin
 
   // ── [SEC-16] Peer address — always the real socket address ───────────────
   // PeerAddr lives on ICrossConnection, accessed via .Connection on the request.
-  PeerAddr := ACrossReq.Connection.PeerAddr;
+  // [FIX-CONN-NIL-1] Connection is nil once the peer has disconnected: Delphi-
+  // Cross-Socket's InternalClose clears request.FConnection without taking the
+  // receive lock, so it can happen while this request is being handled. Read it
+  // once into a local (a counted reference) and nil-check that; reading the
+  // property twice could see it cleared in between. The response cannot reach
+  // a closed peer anyway, so an empty address only has to not crash.
+  LConn := ACrossReq.Connection;
+  if Assigned(LConn) then
+    PeerAddr := LConn.PeerAddr
+  else
+    PeerAddr := '';
 
   // ── PATCH-REQ-3: inject per-request shadow fields ────────────────────────
   // Sets FCSMethod, FCSMethodType, FCSPathInfo, FCSContentType, FCSRemoteAddr
