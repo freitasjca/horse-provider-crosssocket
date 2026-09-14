@@ -85,6 +85,7 @@ uses
 const
   BASE_URL = 'http://127.0.0.1:9010'; // 'http://ipv4.fiddler:9010';   // was: 'http://127.0.0.1:9010'  - For Fiddler catch local
   TIMEOUT_MS          = 8000;
+  CALLBACK_FAILED     = -1;    // [HARNESS-CB-1] StatusCode when a response callback raised
   LARGE_RESPONSE_SIZE = 65536; // must match server constant
   LARGE_BODY_SIZE     = 65536; // bytes sent in test 16
   CONCURRENT_COUNT    = 4;     // parallel requests in test 18
@@ -233,14 +234,29 @@ begin
     AClient.DoRequest(AMethod, AUrl, AHeaders, ABody, nil, nil,
       procedure(const AResp: ICrossHttpClientResponse)
       begin
-        LCallbackTicks := LSWReq.ElapsedMilliseconds;
-        if AResp <> nil then
-        begin
-          LResult.StatusCode := AResp.StatusCode;
-          LResult.Body       := StreamToStr(AResp.Content);
-          LResult.Response   := AResp;
+        // [HARNESS-CB-1] SetEvent runs in finally. StreamToStr raises on a body
+        // that is not valid UTF-8; before this, the exception skipped SetEvent,
+        // the caller waited out TIMEOUT_MS, and the StatusCode already stored
+        // made a "status 200" check pass on a request that really failed.
+        try
+          try
+            LCallbackTicks := LSWReq.ElapsedMilliseconds;
+            if AResp <> nil then
+            begin
+              LResult.StatusCode := AResp.StatusCode;
+              LResult.Body       := StreamToStr(AResp.Content);
+              LResult.Response   := AResp;
+            end;
+          except
+            on E: Exception do
+            begin
+              LResult.StatusCode := CALLBACK_FAILED;
+              LResult.Body       := 'CALLBACK EXCEPTION ' + E.ClassName + ': ' + E.Message;
+            end;
+          end;
+        finally
+          LEvent.SetEvent;
         end;
-        LEvent.SetEvent;
       end);
     LResult.TimedOut := (LEvent.WaitFor(TIMEOUT_MS) <> wrSignaled);
     LSWReq.Stop;
@@ -258,6 +274,15 @@ begin
     LEvent.Free;
   end;
   AResult := LResult;
+  // [HARNESS-CB-1] A timeout must fail every check: a callback that lands after
+  // WaitFor gave up can still have written StatusCode, so clear it here.
+  if AResult.TimedOut then
+  begin
+    AResult.StatusCode := 0;
+    AResult.Body       := '';
+  end
+  else if AResult.StatusCode = CALLBACK_FAILED then
+    Writeln('  ERROR  ' + AResult.Body);
   Result  := not AResult.TimedOut;
   ReportTiming(AMethod + ' ' + AUrl, LResult.ServerMs, LResult.ClientMs,
     LResult.TimedOut);
@@ -285,14 +310,29 @@ begin
     AClient.DoRequest('POST', AUrl, AHeaders, ABody, nil, nil,
       procedure(const AResp: ICrossHttpClientResponse)
       begin
-        LCallbackTicks := LSWReq.ElapsedMilliseconds;
-        if AResp <> nil then
-        begin
-          LResult.StatusCode := AResp.StatusCode;
-          LResult.Body       := StreamToStr(AResp.Content);
-          LResult.Response   := AResp;
+        // [HARNESS-CB-1] SetEvent runs in finally. StreamToStr raises on a body
+        // that is not valid UTF-8; before this, the exception skipped SetEvent,
+        // the caller waited out TIMEOUT_MS, and the StatusCode already stored
+        // made a "status 200" check pass on a request that really failed.
+        try
+          try
+            LCallbackTicks := LSWReq.ElapsedMilliseconds;
+            if AResp <> nil then
+            begin
+              LResult.StatusCode := AResp.StatusCode;
+              LResult.Body       := StreamToStr(AResp.Content);
+              LResult.Response   := AResp;
+            end;
+          except
+            on E: Exception do
+            begin
+              LResult.StatusCode := CALLBACK_FAILED;
+              LResult.Body       := 'CALLBACK EXCEPTION ' + E.ClassName + ': ' + E.Message;
+            end;
+          end;
+        finally
+          LEvent.SetEvent;
         end;
-        LEvent.SetEvent;
       end);
     LResult.TimedOut := (LEvent.WaitFor(TIMEOUT_MS) <> wrSignaled);
     LSWReq.Stop;
@@ -310,6 +350,15 @@ begin
     LEvent.Free;
   end;
   AResult := LResult;
+  // [HARNESS-CB-1] A timeout must fail every check: a callback that lands after
+  // WaitFor gave up can still have written StatusCode, so clear it here.
+  if AResult.TimedOut then
+  begin
+    AResult.StatusCode := 0;
+    AResult.Body       := '';
+  end
+  else if AResult.StatusCode = CALLBACK_FAILED then
+    Writeln('  ERROR  ' + AResult.Body);
   Result  := not AResult.TimedOut;
   ReportTiming('POST ' + AUrl + ' (multipart)',
     LResult.ServerMs, LResult.ClientMs, LResult.TimedOut);
@@ -479,12 +528,24 @@ var
       nil, nil,
       procedure(const AResp: ICrossHttpClientResponse)
       begin
-        if AResp <> nil then
-        begin
-          LBurstBatch[AIdx].Status := AResp.StatusCode;
-          LBurstBatch[AIdx].Body   := StreamToStr(AResp.Content);
+        // [HARNESS-CB-1] SetEvent runs in finally; see DoSync.
+        try
+          try
+            if AResp <> nil then
+            begin
+              LBurstBatch[AIdx].Status := AResp.StatusCode;
+              LBurstBatch[AIdx].Body   := StreamToStr(AResp.Content);
+            end;
+          except
+            on E: Exception do
+            begin
+              LBurstBatch[AIdx].Status := CALLBACK_FAILED;
+              LBurstBatch[AIdx].Body   := 'CALLBACK EXCEPTION ' + E.ClassName + ': ' + E.Message;
+            end;
+          end;
+        finally
+          LBurstBatch[AIdx].Event.SetEvent;
         end;
-        LBurstBatch[AIdx].Event.SetEvent;
       end);
   end;
 
@@ -496,12 +557,24 @@ var
       nil, nil,
       procedure(const AResp: ICrossHttpClientResponse)
       begin
-        if AResp <> nil then
-        begin
-          LBatch[AIdx].Status := AResp.StatusCode;
-          LBatch[AIdx].Body   := StreamToStr(AResp.Content);
+        // [HARNESS-CB-1] SetEvent runs in finally; see DoSync.
+        try
+          try
+            if AResp <> nil then
+            begin
+              LBatch[AIdx].Status := AResp.StatusCode;
+              LBatch[AIdx].Body   := StreamToStr(AResp.Content);
+            end;
+          except
+            on E: Exception do
+            begin
+              LBatch[AIdx].Status := CALLBACK_FAILED;
+              LBatch[AIdx].Body   := 'CALLBACK EXCEPTION ' + E.ClassName + ': ' + E.Message;
+            end;
+          end;
+        finally
+          LBatch[AIdx].Event.SetEvent;
         end;
-        LBatch[AIdx].Event.SetEvent;
       end);
   end;
 
@@ -515,12 +588,24 @@ var
       nil, TBytes(nil), nil, nil,
       procedure(const AResp: ICrossHttpClientResponse)
       begin
-        if AResp <> nil then
-        begin
-          LStreamBatch[AIdx].Status := AResp.StatusCode;
-          LStreamBatch[AIdx].Body   := StreamToStr(AResp.Content);
+        // [HARNESS-CB-1] SetEvent runs in finally; see DoSync.
+        try
+          try
+            if AResp <> nil then
+            begin
+              LStreamBatch[AIdx].Status := AResp.StatusCode;
+              LStreamBatch[AIdx].Body   := StreamToStr(AResp.Content);
+            end;
+          except
+            on E: Exception do
+            begin
+              LStreamBatch[AIdx].Status := CALLBACK_FAILED;
+              LStreamBatch[AIdx].Body   := 'CALLBACK EXCEPTION ' + E.ClassName + ': ' + E.Message;
+            end;
+          end;
+        finally
+          LStreamBatch[AIdx].Event.SetEvent;
         end;
-        LStreamBatch[AIdx].Event.SetEvent;
       end);
   end;
 
