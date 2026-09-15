@@ -3,7 +3,7 @@
 Authoritative reference for the GitHub Actions workflow that keeps the
 `freitasjca/Delphi-Cross-Socket` fork automatically aligned with upstream
 `winddriver/Delphi-Cross-Socket`, while preserving the fork-only additions
-(CnPack subset, `SetCipherList`, PATCH-CSHTTP-3, boss.json, workflow self-files).
+(CnPack subset, `SetCipherList`, the HEAD resend-loop fix, boss.json, workflow self-files; PATCH-CSHTTP-3 until fork v1.0.13 removed it).
 
 This document captures **what was prepared, why, and how to operate it**.
 It is the canonical source if anyone (future you, a successor maintainer)
@@ -26,8 +26,9 @@ needs to understand or modify the fork-sync system.
 > `-X renormalize` is required. The fork stores `.pas` files with LF
 > (`core.autocrlf`) while upstream stores CRLF, so a plain merge reports every file
 > the fork has touched as one whole-file conflict. The staged merge workflow runs a
-> plain `git merge`, and its fork-only marker list does not include the HEAD
-> resend-loop fix, so it needs both changes before it could be deployed.
+> plain `git merge`, so it needs `-X renormalize` before it could be deployed. Its
+> fork-only marker list was updated on 2026-09-15 to `SetCipherList FIX-HEAD-LOOP`,
+> dropping the PATCH-CSHTTP-3 markers along with the retry itself.
 
 ---
 
@@ -47,15 +48,15 @@ landed upstream:
 | `PATCH-CSHTTP-2` CL=0 hang | **Obsolete** — upstream commit `f543650e` implements the identical fix |
 | `MTLS-1/2` `AddCACertificate(File)` + `SetVerifyPeer(Boolean)` | **In upstream** winddriver ≥2026-08 (API renamed from `SetCACertificate`); also in the fork |
 | `TLSOPT-1` password-in-`SetPrivateKeyFile` | **In upstream** winddriver ≥2026-08; also in the fork |
-| `PATCH-CSHTTP-3` keep-alive retry | **Fork-only** — proposed upstream as PR #201, **closed unmerged** 2026-09-06; in fork v1.0.12 (see the provider README for its caveats) |
+| `PATCH-CSHTTP-3` keep-alive retry | **Removed** — PR #201 was closed unmerged 2026-09-06, and every point of that review held against the fork's code, so fork v1.0.13 dropped it (commit `5bde2de`). Fork v1.0.7–v1.0.12 still contain it |
 | `TLSOPT-2` `SetCipherList` | **Superseded** — upstream `bb85ab4` added `SetTls12CipherSuites` / `SetTls13CipherSuites` and PR #200 was closed in their favour; the fork keeps `SetCipherList` as a deprecated delegation, and this provider calls `SetTls12CipherSuites` from v1.0.23 |
-| `FIX-HEAD-LOOP-1/2` HEAD resend loop in `TCrossHttpResponse._Send` / `TCrossHttpClientConnection._HttpSend` | **Fork-only** — fork v1.0.12; reported upstream as issue #203 (open) |
+| `FIX-HEAD-LOOP-1/2` HEAD resend loop in `TCrossHttpResponse._Send` / `TCrossHttpClientConnection._HttpSend` | **Fork-only** — fork v1.0.12 and later; reported upstream as issue #203 (open) |
 
-As of fork v1.0.12 the fork-only code changes are **PATCH-CSHTTP-3** (keep-alive retry in `TCrossHttpClient`) and **FIX-HEAD-LOOP-1/2** (HEAD resend loop); `SetCipherList` remains only as a delegation to upstream's API. mTLS and password-in-key are in upstream.
+As of fork v1.0.13 the only fork-only code change is **FIX-HEAD-LOOP-1/2** (HEAD resend loop); `SetCipherList` remains only as a delegation to upstream's API, and PATCH-CSHTTP-3 has been removed. mTLS and password-in-key are in upstream.
 
 ### Why the fork still exists
 
-The fork remains necessary because `winddriver/Delphi-Cross-Socket` is not Boss-installable (no `boss.json`, CnPack dependency not Boss-resolvable). The fork vendors the CnPack subset and ships PATCH-CSHTTP-3 and the HEAD resend-loop fix. The current release (`v1.0.12`, upstream up to `7139d39`) keeps the fork **as close to upstream as possible** — minimising the surface area where it can diverge silently.
+The fork remains necessary because `winddriver/Delphi-Cross-Socket` is not Boss-installable (no `boss.json`, CnPack dependency not Boss-resolvable). The fork vendors the CnPack subset and ships the HEAD resend-loop fix. The current release (`v1.0.13`, upstream up to `7139d39`) keeps the fork **as close to upstream as possible** — minimising the surface area where it can diverge silently.
 
 ### Operational philosophy
 
@@ -309,12 +310,16 @@ The exact commands are embedded in the issue body — copy-paste runnable.
 ## 7. End-state when upstream merges the remaining fork-only additions
 
 > **2026-08-04 update:** mTLS (`AddCACertificate` / `SetVerifyPeer`) and
-> password-in-key have already merged into upstream winddriver. The two
-> remaining fork-only additions are `SetCipherList` (TLSOPT-2) and
-> PATCH-CSHTTP-3 (keep-alive retry in `TCrossHttpClient`).
+> password-in-key have already merged into upstream winddriver.
+>
+> **2026-09-15 update:** neither of the two additions named here landed
+> upstream. `SetCipherList` is now a deprecated delegation to upstream's
+> `SetTls12CipherSuites`, and PATCH-CSHTTP-3 was removed in fork v1.0.13. The
+> only fork-only code left is FIX-HEAD-LOOP-1/2 (upstream issue #203); the fork
+> also still exists for Boss packaging (CnPack subset, `boss.json`).
 
-When `SetCipherList` and PATCH-CSHTTP-3 land in upstream, the fork's
-last reason to exist disappears. Procedure for retirement:
+When upstream fixes #203, the fork's last code difference disappears. Procedure
+for retirement:
 
 1. Confirm both additions are present on `winddriver/Delphi-Cross-Socket@master`.
 2. Delete `.sync/patches/Net.CrossSslSocket.Base.pas.patch` and
@@ -334,7 +339,7 @@ defence-in-depth against accidental drift even during the transition.
 ## 8. Cross-references
 
 - [Provider README installation paths](../README.md) — Path A
-  (fork v1.0.12: CnPack subset, PATCH-CSHTTP-3, HEAD resend-loop fix) vs Path B (upstream + manual CnPack)
+  (fork v1.0.13: CnPack subset, HEAD resend-loop fix) vs Path B (upstream + manual CnPack)
 - [`patches/horse/doc/providers.md`](../../horse/doc/providers.md) —
   current default-install guidance in the user-facing Horse docs
 - [`Net.CrossSslSocket.Base.pas`](../../Delphi-Cross-Socket/Net/Net.CrossSslSocket.Base.pas)

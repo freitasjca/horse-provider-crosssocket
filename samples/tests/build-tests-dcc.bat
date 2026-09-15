@@ -111,8 +111,8 @@ echo    HorseCSTestServer          terminal 1  ^(listens on 127.0.0.1:9100^)
 echo    HorseCSTestClient          terminal 2  ^(105 checks^)
 echo.
 echo  Client exit code = number of failed checks; 0 means all passed.
-echo  Watch checks 07, 14, 18 and 29 -- those are the stale keep-alive ones
-echo  that PATCH-CSHTTP-3 exists to fix.
+echo  A red check reporting 400 Connection lost is a stale keep-alive failure;
+echo  Delphi-Cross-Socket v1.0.13 and later no longer retry those automatically.
 exit /b 0
 
 REM ===========================================================================
