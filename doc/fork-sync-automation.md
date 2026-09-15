@@ -9,6 +9,26 @@ This document captures **what was prepared, why, and how to operate it**.
 It is the canonical source if anyone (future you, a successor maintainer)
 needs to understand or modify the fork-sync system.
 
+> **Status 2026-09-15 — this document describes a superseded design.** Everything
+> below documents the reset-and-re-layer workflow as it stood on 2026-08-04. That
+> design keeps only the fork-only content somebody remembered to list, and a
+> file-copy sync done in that style deleted PATCH-CSHTTP-3 while its commit message
+> said it had been preserved. The workflow was rewritten on 2026-08-28 as a
+> merge-based `sync-upstream.yml` that never force-pushes and opens a PR, staged in
+> the workspace folder `crosssocket-fork-sync-action/`. **Neither version has been
+> deployed:** the fork has no `.github/workflows`. Upstream syncs are done by hand:
+>
+> ```bash
+> git fetch upstream
+> git merge --no-ff -X renormalize upstream/master   # on master, then fast-forward dev
+> ```
+>
+> `-X renormalize` is required. The fork stores `.pas` files with LF
+> (`core.autocrlf`) while upstream stores CRLF, so a plain merge reports every file
+> the fork has touched as one whole-file conflict. The staged merge workflow runs a
+> plain `git merge`, and its fork-only marker list does not include the HEAD
+> resend-loop fix, so it needs both changes before it could be deployed.
+
 ---
 
 ## 1. Background and intent
@@ -19,22 +39,23 @@ needs to understand or modify the fork-sync system.
 `winddriver/Delphi-Cross-Socket` to carry features and fixes that hadn't
 landed upstream:
 
-| Fix tag | Status as of 2026-08-04 |
+| Fix tag | Status (updated 2026-09-15) |
 |---|---|
 | `PATCH-IOCP-1` shutdown-cascade race | **Obsolete** — upstream fixed independently |
 | `PATCH-CSHTTP-1` zero-body parser hang | **Obsolete** — upstream `SetNoBody` mechanism is functionally equivalent and RFC 7230-correct |
 | `TCrossHttpClientConnection._OnBodyEnd` nil-guard | **Obsolete** — upstream line 2028 has the guard |
 | `PATCH-CSHTTP-2` CL=0 hang | **Obsolete** — upstream commit `f543650e` implements the identical fix |
-| `MTLS-1/2` `AddCACertificate(File)` + `SetVerifyPeer(Boolean)` | **In upstream** winddriver ≥2026-08 (API renamed from `SetCACertificate`); included in fork v1.0.6 |
-| `TLSOPT-1` password-in-`SetPrivateKeyFile` | **In upstream** winddriver ≥2026-08; included in fork v1.0.6 |
-| `PATCH-CSHTTP-3` keep-alive retry | **Fork-only** — not in upstream winddriver; included in fork v1.0.6 |
-| `TLSOPT-2` `SetCipherList` | **Fork-only** — not in upstream winddriver; included in fork v1.0.6 |
+| `MTLS-1/2` `AddCACertificate(File)` + `SetVerifyPeer(Boolean)` | **In upstream** winddriver ≥2026-08 (API renamed from `SetCACertificate`); also in the fork |
+| `TLSOPT-1` password-in-`SetPrivateKeyFile` | **In upstream** winddriver ≥2026-08; also in the fork |
+| `PATCH-CSHTTP-3` keep-alive retry | **Fork-only** — proposed upstream as PR #201, **closed unmerged** 2026-09-06; in fork v1.0.12 (see the provider README for its caveats) |
+| `TLSOPT-2` `SetCipherList` | **Superseded** — upstream `bb85ab4` added `SetTls12CipherSuites` / `SetTls13CipherSuites` and PR #200 was closed in their favour; the fork keeps `SetCipherList` as a deprecated delegation, and this provider calls `SetTls12CipherSuites` from v1.0.23 |
+| `FIX-HEAD-LOOP-1/2` HEAD resend loop in `TCrossHttpResponse._Send` / `TCrossHttpClientConnection._HttpSend` | **Fork-only** — fork v1.0.12; reported upstream as issue #203 (open) |
 
-The remaining fork-only deltas are **`SetCipherList`** (TLS 1.2 cipher override) and **PATCH-CSHTTP-3** (keep-alive retry in `TCrossHttpClient`). mTLS and password-in-key are now in upstream. The workflow automates upstream sync down to zero human involvement on the happy path.
+As of fork v1.0.12 the fork-only code changes are **PATCH-CSHTTP-3** (keep-alive retry in `TCrossHttpClient`) and **FIX-HEAD-LOOP-1/2** (HEAD resend loop); `SetCipherList` remains only as a delegation to upstream's API. mTLS and password-in-key are in upstream.
 
 ### Why the fork still exists
 
-The fork remains necessary because `winddriver/Delphi-Cross-Socket` is not Boss-installable (no `boss.json`, CnPack dependency not Boss-resolvable). The fork vendors the CnPack subset and ships `SetCipherList` + PATCH-CSHTTP-3. A current stable release (`v1.0.6`) keeps the fork **as close to upstream as possible** — minimising the surface area where it can diverge silently.
+The fork remains necessary because `winddriver/Delphi-Cross-Socket` is not Boss-installable (no `boss.json`, CnPack dependency not Boss-resolvable). The fork vendors the CnPack subset and ships PATCH-CSHTTP-3 and the HEAD resend-loop fix. The current release (`v1.0.12`, upstream up to `7139d39`) keeps the fork **as close to upstream as possible** — minimising the surface area where it can diverge silently.
 
 ### Operational philosophy
 
@@ -313,7 +334,7 @@ defence-in-depth against accidental drift even during the transition.
 ## 8. Cross-references
 
 - [Provider README installation paths](../README.md) — Path A
-  (upstream + manual CnPack) vs Path B (fork v1.0.6 for `SetCipherList` + PATCH-CSHTTP-3)
+  (fork v1.0.12: CnPack subset, PATCH-CSHTTP-3, HEAD resend-loop fix) vs Path B (upstream + manual CnPack)
 - [`patches/horse/doc/providers.md`](../../horse/doc/providers.md) —
   current default-install guidance in the user-facing Horse docs
 - [`Net.CrossSslSocket.Base.pas`](../../Delphi-Cross-Socket/Net/Net.CrossSslSocket.Base.pas)

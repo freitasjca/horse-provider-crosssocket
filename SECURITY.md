@@ -64,7 +64,7 @@ branches.
 
 | Version | Supported |
 |---|---|
-| 1.0.16.x | Yes |
+| 1.0.23 (latest) | Yes |
 | earlier | No |
 
 Your exposure also depends on the versions of the transport library and of Horse that
