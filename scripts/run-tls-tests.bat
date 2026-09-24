@@ -45,6 +45,26 @@ set "SERVER_EXE=%BIN%\HorseCSTLSTestServer.exe"
 set "CLIENT_EXE=%BIN%\HorseCSTLSTestClient.exe"
 set "TLS_PORT=9101"
 
+REM -- Build first, so the gate owns its inputs ------------------------------
+REM  A stale .exe passes exactly as convincingly as a current one, and nothing
+REM  in the result says which you ran. That cost four void results on
+REM  2026-09-24 across these three suites; the CrossSocket one was caught only
+REM  because code that had since been DELETED happened to still print a
+REM  diagnostic line. Timestamp heuristics can be fooled and are awkward to get
+REM  right in cmd; rebuilding costs ~2 seconds and removes the question.
+REM
+REM  A build failure is VOID, not FAILED: nothing was tested, so reporting a
+REM  count of failed assertions would be a lie.
+REM
+REM  Pass  nobuild  to skip it (prebuilt binaries, or a CI stage that already
+REM  built) - then staleness is yours to own again.
+if /I "%~1"=="nobuild" goto :skip_build
+echo === building (pass "nobuild" to skip) ===
+call "%ROOT%\tests\build-tls-tests.bat"
+if errorlevel 1 goto :build_failed
+echo.
+:skip_build
+
 if not exist "%SERVER_EXE%" goto :not_built
 if not exist "%CLIENT_EXE%" goto :not_built
 if not exist "%BIN%\certs\server.crt" goto :no_certs
@@ -132,6 +152,13 @@ if exist "!LOG!" type "!LOG!"
 echo    -----------------------
 exit /b 0
 
+:build_failed
+echo.
+echo ===========================================================================
+echo  VOID - the build failed, so nothing was tested. This is NOT a test
+echo         failure; fix the build error above and run again.
+echo ===========================================================================
+exit /b 2
 :not_built
 echo ERROR: the TLS test binaries are not built. Run:
 echo          tests\build-tls-tests.bat
