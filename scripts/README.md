@@ -83,14 +83,30 @@ The server is always killed on exit, even if the client crashes or the script is
 
 ---
 
-### `run-tls-tests.bat [Platform] [Config]`
+### `run-tls-tests.bat`
 
 Runs the CrossSocket **TLS / mutual-TLS integration test** (`HorseCSTLSTestServer` +
 `HorseCSTLSTestClient`) in two passes — one-way TLS, then mutual TLS — on port 9101.
-Copies `tests\certs` next to the binaries if missing. Exit code = total failed
-assertions. The mutual-TLS pass needs the two `Net.CrossSslSocket.*` mTLS patches (or
-the fork release). The mORMot and ICS providers ship parallel `Horse*TLSTest*` pairs
-in their own repos (ports 9201 / 9111).
+Build first with `tests\build-tls-tests.bat`. Exit code: **0** = all passed,
+**N** = N failed assertions, **2** = **VOID** (the suite did not run). The mutual-TLS
+pass needs the two `Net.CrossSslSocket.*` mTLS patches (or the fork release). The
+mORMot and ICS providers ship parallel `Horse*TLSTest*` pairs in their own repos
+(ports 9201 / 9111).
+
+> **Takes no arguments as of 2026-09-24.** It previously accepted
+> `[Platform] [Config]` to pick `samples\tests\<Platform>\<Config>` — a directory
+> that has never existed for this pair, because `build-tls-tests.bat` passes no
+> `-E` and builds them in place into `tests\`. The script therefore exited 1 with
+> "Not built" and had never gated anything. It now also refuses to start when port
+> 9101 is already held (Windows lets a second process bind an owned port without
+> error, so the client could be answering to a stale server) and kills by PID
+> rather than image name.
+
+**A green run only counts against binaries built from current source.** The first
+real run of this gate passed while the client was still emitting `[PATCH-CSHTTP-3]`
+retry lines — code deleted from the fork in v1.0.13 — because the `.exe` files in
+`tests\` were three weeks stale. Rebuild before believing a result; the absence of
+those retry lines is the cheapest confirmation the rebuild took.
 
 ### `bench-tls.bat [--mtls]` · `bench-tls.sh [--mtls]`
 
