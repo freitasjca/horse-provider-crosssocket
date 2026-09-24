@@ -37,6 +37,13 @@ REM  define set -- and the failure is silent: you test the wrong provider with
 REM  no diagnostic.
 REM ===========================================================================
 
+REM -- Run from THIS folder, wherever we were invoked from. Every path below
+REM    is relative to tests\ (..\..\Delphi-Cross-Socket, !PROG!.dpr), so a
+REM    caller in another directory used to find no .dpr at all - and this
+REM    script then SKIPPED both programs and still reported BUILT. The
+REM    setlocal on line 2 restores the caller's directory on exit.
+cd /d "%~dp0"
+
 set "FAILED=0"
 
 REM -- Locate dcc64 ----------------------------------------------------------
@@ -128,7 +135,13 @@ set /a FAILED+=1
 goto :eof
 
 :b_missing
-echo    SKIP  !PROG!.dpr not present
+REM  A missing source is a FAILURE, not a skip. This printed "SKIP" and
+REM  returned success, so the script reported BUILT having compiled
+REM  nothing - and run-tls-tests.bat, which calls this to guarantee fresh
+REM  binaries, silently tested whatever .exe happened to be lying there.
+echo    MISSING  !PROG!.dpr not found in %~dp0
+echo             Nothing was compiled for this program.
+set /a FAILED+=1
 goto :eof
 
 REM ===========================================================================
