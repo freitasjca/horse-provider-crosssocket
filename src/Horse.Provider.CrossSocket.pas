@@ -185,6 +185,13 @@ type
     // [FIX-CS-1] StopListen — matches the base virtual.
     class procedure StopListen; override;
 
+    // [FIX-CS-GRACEFUL-1] StopListenGraceful — the override AGENTS.md makes
+    // mandatory for any provider that owns the TCP socket. Without it this
+    // provider inherited THorseProviderAbstract's version, which discards
+    // ATimeoutMS and calls StopListen — measured 10/10 as a 4193-4203 ms wait
+    // bounded by neither timeout, with the in-flight reply lost at 809-819 ms.
+    class procedure StopListenGraceful(const ATimeoutMS: Integer = 5000); override;
+
     // [FIX-CS-1] No-param Listen — required by base 'virtual; abstract'.
     class procedure Listen; overload; override;
 
@@ -344,6 +351,49 @@ class procedure THorseProviderCrossSocket.StopListen;
 begin
   Stop;
   DoOnStopListen;
+end;
+
+// ── StopListenGraceful — [FIX-CS-GRACEFUL-1] ─────────────────────────────────
+// Same steps as StopListen/Stop, with one difference that is the entire point:
+// the server is drained with FServer.StopGraceful(ATimeoutMS) instead of
+// FServer.Stop, so in-flight requests keep their connections long enough to
+// answer and the CALLER's timeout is what bounds the wait.
+//
+// Everything else is deliberately identical to Stop so that shutdown bookkeeping
+// cannot diverge between the two paths: FRunning first, then free the server,
+// finalize the worker pool, and signal FStopEvent last — which is what releases
+// a main thread parked inside ListenWithConfig, so it wakes only once teardown
+// is complete.
+//
+// TriggerBeforeStop is called here because AGENTS.md requires it at the top of a
+// physical stop routine and Horse.Provider.Console does the same. Note that this
+// provider's StopListen does NOT fire it: it overrides the base without calling
+// inherited, so the hook is silently skipped on that path. That is a separate
+// pre-existing gap, not touched here.
+class procedure THorseProviderCrossSocket.StopListenGraceful(
+  const ATimeoutMS: Integer
+);
+begin
+  TriggerBeforeStop;
+  SetIsShuttingDown(True);
+  try
+    FRunning := False;
+
+    if Assigned(FServer) then
+    begin
+      FServer.StopGraceful(ATimeoutMS);
+      FreeAndNil(FServer);
+    end;
+
+    THorseWorkerPool.Finalize;
+
+    if Assigned(FStopEvent) then
+      FStopEvent.SetEvent;
+
+    DoOnStopListen;
+  finally
+    SetIsShuttingDown(False);
+  end;
 end;
 
 // ── Stop ─────────────────────────────────────────────────────────────────────
