@@ -1,6 +1,9 @@
-# Conservative policy for an upstream-synced fork: do NOT globally normalise
-# (that would drift the fork from winddriver on every sync). Only force endings
-# where a wrong one breaks the file, and keep vendored/byte-exact files intact.
+# Line-ending policy for this repo. It is NOT a fork of an upstream project -
+# origin is the only remote - so there is no sync to stay byte-close to, and the
+# earlier "conservative, do not normalise" policy (copied from the
+# Delphi-Cross-Socket fork, where it IS correct) only produced an inconsistent
+# index. Pascal sources are pinned below; force endings anywhere a wrong one
+# breaks the file, and keep byte-exact files intact.
 
 # Scripts & CI — a wrong ending breaks these
 *.sh     text eol=lf
@@ -10,8 +13,7 @@
 *.yml    text eol=lf
 *.yaml   text eol=lf
 
-# Vendored CnPack (GBK-encoded) + patches — never normalise; stay identical to source
-CnPack/** -text
+# Patches & diffs — never normalise; stay identical to source
 *.patch  -text
 *.diff   -text
 
@@ -37,5 +39,24 @@ CnPack/** -text
 *.dll binary
 *.so  binary
 *.dylib binary
-# NOTE: *.pas/.dpr/.inc/.dproj are intentionally NOT listed — left to core.autocrlf
-#       so the fork stays byte-close to upstream after each sync.
+
+# Pascal sources — LF in the repository, CRLF in the working tree.
+#
+# Previously unlisted and left to core.autocrlf, which produced a SPLIT INDEX: 34
+# files stored LF, 13 stored CRLF, 4 LF in both. Editing one of the CRLF-stored
+# minority made autocrlf renormalise the whole file, so a real +157/-1 change to
+# Horse.Provider.CrossSocket.Server.pas was committed as 2138 insertions /
+# 1001 deletions and had to be reset and redone (2026-09-28, v1.0.25).
+#
+# text=auto rather than plain text, matching horse-provider-mormot and
+# horse-provider-ics: it lets git's own heuristic skip anything it reads as binary,
+# so a UTF-16 source could never be corrupted by normalisation. There are none
+# today - checked - which is exactly why the guard should be in place before one
+# appears. *.inc is listed for the same reason: zero files match right now.
+*.pas    text=auto eol=crlf
+*.dpr    text=auto eol=crlf
+*.inc    text=auto eol=crlf
+
+# NOTE: *.dproj is deliberately still NOT listed. The Delphi IDE owns those files
+#       and CLAUDE.md forbids editing them, so they are left to core.autocrlf
+#       rather than renormalised by a commit no IDE asked for.

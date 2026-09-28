@@ -28,7 +28,7 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 | HTTP request-smuggling protection ¹ | ✗ | ✓ |
 | Pre-pipeline input validation ¹ | ✗ | ✓ |
 | Security response headers ¹ | ✗ | ✓ |
-| Graceful shutdown drain | ✓ | ✓ |
+| Graceful shutdown drain | ✓ | ✓ (partial — accepts during drain; see [Graceful shutdown](#graceful-shutdown)) |
 
 ¹ CrossSocket enforces these **before** the Horse pipeline via `TRequestBridge.Populate` and `TResponseBridge.Flush`. Equivalent middleware for the Indy path is provided in the [Security Model](#security-model) section.
 
@@ -45,6 +45,7 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 - [Mutual TLS (mTLS)](#mutual-tls-mtls)
 - [Advanced Configuration](#advanced-configuration)
 - [Worker Pool](#worker-pool)
+- [Graceful shutdown](#graceful-shutdown)
 - [Architecture](#architecture)
 - [Security Model](#security-model)
   - [Equivalent protection on Indy](#equivalent-protection-on-indy)
@@ -63,21 +64,21 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 |---|---|---|
 | Delphi | 10.4 Sydney+ | Requires `System.Threading`, inline `var` |
 | Lazarus / FPC | **3.3.1 trunk+** | FPC 3.2.2 (stable) **cannot compile this provider**. Delphi-Cross-Socket's `zLib.inc` requires `{$MODESWITCH FUNCTIONREFERENCES}` and `{$MODESWITCH ANONYMOUSFUNCTIONS}`, which were introduced in FPC 3.3.1 (development branch). FPC 3.4.x (when released as stable) will also satisfy this requirement. See [doc/installing-fpc-trunk-lazarus.md](doc/installing-fpc-trunk-lazarus.md) for step-by-step instructions using [fpcupdeluxe](https://github.com/LongDirtyAnimAlf/fpcupdeluxe/releases). |
-| [Horse](https://github.com/HashLoad/horse) | **3.3.3+** | Pulled in by `boss install` of this package — no fork needed. 3.3.0 first carried the provider changes, but **3.3.3 is the floor** because `Res.Send<TStream>` is a silent no-op before it: on 3.3.0–3.3.2 `Send<T>` just stores the argument in `FContent`, which no provider bridge reads as a stream, so every such response returns `200 Content-Length: 0` with no error. Fixed by PATCH-RES-8 in 3.3.3. |
+| [Horse](https://github.com/HashLoad/horse) | **3.3.10+** | Pulled in by `boss install` of this package — no fork needed. 3.3.0 first carried the provider changes, but **3.3.3 is the floor** because `Res.Send<TStream>` is a silent no-op before it: on 3.3.0–3.3.2 `Send<T>` just stores the argument in `FContent`, which no provider bridge reads as a stream, so every such response returns `200 Content-Length: 0` with no error. Fixed by PATCH-RES-8 in 3.3.3. |
 | [Delphi-Cross-Socket](https://github.com/winddriver/Delphi-Cross-Socket) | fork **1.0.13+** | Transport layer. **Easy path (Boss users):** clone [`freitasjca/Delphi-Cross-Socket v1.0.13`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.13) — Boss-installable, bundles CnPack subset and one fork-only fix (HEAD resend loop). **Advanced path:** clone [`winddriver/Delphi-Cross-Socket`](https://github.com/winddriver/Delphi-Cross-Socket) directly for the latest upstream; requires separate CnPack install (see [Installation](#installation)). |
 | [CnPack](https://github.com/cnpack/cnvcl) (Crypto units) | latest | Required by Delphi-Cross-Socket — install separately. See [Installation](#installation) |
 | OpenSSL | 1.1.x or 3.x | Only required for HTTPS |
 | [Boss](https://github.com/HashLoad/boss) | any | Recommended — pulls in Horse automatically |
 
 > **Note — fork vs upstream trade-off**  
-> [`freitasjca/Delphi-Cross-Socket`](https://github.com/freitasjca/Delphi-Cross-Socket) (v1.0.13) is Boss-installable and bundles the CnPack subset and one fork-only fix, for the HEAD resend loop that upstream does not have yet — it is the easiest starting point. Fork v1.0.7–v1.0.12 also carried PATCH-CSHTTP-3, an automatic retry that could send a POST twice; v1.0.13 removed it (see [Required Changes to Horse Source](#required-changes-to-horse-source)). mTLS (`AddCACertificateFile` + `SetVerifyPeer`) is now also in upstream `winddriver/Delphi-Cross-Socket` as of 2026-08. If you need the absolute latest CrossSocket changes, use the upstream clone (Path B in [Installation](#installation)). Maintainers: see [`MAINTAINING-CNPACK-SUBSET.md`](MAINTAINING-CNPACK-SUBSET.md) for fork-sync details.
+> [`freitasjca/Delphi-Cross-Socket`](https://github.com/freitasjca/Delphi-Cross-Socket) (v1.0.15) is Boss-installable and bundles the CnPack subset and two fork-only fixes that upstream does not have yet — the HEAD resend loop and the double-compression guard, both now filed upstream as [#205](https://github.com/winddriver/Delphi-Cross-Socket/pull/205) and [#206](https://github.com/winddriver/Delphi-Cross-Socket/pull/206). It is the easiest starting point. **This provider requires `>=1.0.14`** (the compression guard) from v1.0.25. Fork v1.0.7–v1.0.12 also carried PATCH-CSHTTP-3, an automatic retry that could send a POST twice; v1.0.13 removed it (see [Required Changes to Horse Source](#required-changes-to-horse-source)). mTLS (`AddCACertificateFile` + `SetVerifyPeer`) is now also in upstream `winddriver/Delphi-Cross-Socket` as of 2026-08. If you need the absolute latest CrossSocket changes, use the upstream clone (Path B in [Installation](#installation)). Maintainers: see [`MAINTAINING-CNPACK-SUBSET.md`](MAINTAINING-CNPACK-SUBSET.md) for fork-sync details.
 
 ---
 
 ## Required Changes to Horse Source
 
-> **Status: all required changes are in official upstream `HashLoad/horse`; the floor is 3.3.3.**  
-> This provider depends directly on `HashLoad/horse` `>=3.3.3` — the `freitasjca/horse` fork is retired. `boss install` resolves the dependency automatically. The floor is 3.3.3 rather than 3.3.0 because `Res.Send<TStream>` silently returns an empty body on earlier releases.
+> **Status: all required changes are in official upstream `HashLoad/horse`; the floor is 3.3.10.**  
+> This provider depends directly on `HashLoad/horse` `>=3.3.10` — the `freitasjca/horse` fork is retired. `boss install` resolves the dependency automatically. The floor was 3.3.3 rather than 3.3.0 because `Res.Send<TStream>` silently returns an empty body on earlier releases; it moved to **3.3.10 in provider v1.0.25** because `StopListenGraceful` is silently inert through `THorse` on anything earlier — see [Graceful shutdown](#graceful-shutdown).
 
 ### What the Horse patches add
 
@@ -388,13 +389,13 @@ No existing method is removed, renamed, or given a different signature. Existing
 
 **There are no patches for an end-user to apply.**
 
-- **Horse changes** are in `HashLoad/horse` ≥3.3.3. `boss install` pulls the correct version automatically — no fork needed.
+- **Horse changes** are in `HashLoad/horse` ≥3.3.10. `boss install` pulls the correct version automatically — no fork needed.
 - **Delphi-Cross-Socket bug fixes and mTLS** (`AddCACertificateFile` + `SetVerifyPeer`, password-in-`SetPrivateKeyFile`, CL=0 parser fix) are merged into `winddriver/Delphi-Cross-Socket` upstream as of 2026-08. They are also included in the fork release [`freitasjca/Delphi-Cross-Socket v1.0.13`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.13), which Boss resolves automatically.
 - **Fork-only changes** are in `freitasjca/Delphi-Cross-Socket` v1.0.13. `SetCipherList` and PATCH-CSHTTP-3 were proposed upstream and **both were closed unmerged on 2026-09-06**; the fork has since reduced `SetCipherList` to a deprecated delegation and removed PATCH-CSHTTP-3. The HEAD resend-loop fix is newer and reported upstream:
 
-  - **`SetCipherList` was superseded.** Upstream implemented the same capability under version-specific names: `SetTls12CipherSuites` (→ `SSL_CTX_set_cipher_list`) and `SetTls13CipherSuites` (→ `SSL_CTX_set_ciphersuites`), which the single fork method cannot express. See [PR #200](https://github.com/winddriver/Delphi-Cross-Socket/pull/200). This provider has called `SetTls12CipherSuites` since v1.0.23, so `SSLCipherList` works against upstream too; the fork keeps `SetCipherList` only as a deprecated delegation to it. TLS 1.3 cipher suites (`SetTls13CipherSuites`) are not surfaced as a provider option yet.
-  - **PATCH-CSHTTP-3 was rejected on substance, and fork v1.0.13 removed it.** See [PR #201](https://github.com/winddriver/Delphi-Cross-Socket/pull/201). It re-sent a `TCrossHttpClient` request once after a connection failure, and every point of the maintainer's review held against the fork's code: it could replay a POST (zero response bytes do not prove the server did not run it); the delayed retry ran on an unmanaged thread outside cancellation and client shutdown; a retry could wait behind the connection limit until an idle connection timed out, or indefinitely with `Idleout = 0`; it also retried parse and compression failures; and it `Writeln`ed full request URLs, query string included. The failures it was written for had other causes, since fixed. From v1.0.13 a connection failure reaches the caller, as with upstream, and retrying is the caller's decision. **Fork v1.0.7–v1.0.12 still contain it**, which is why this provider requires `>=1.0.13` from v1.0.24.
-  - **HEAD resend-loop fix (FIX-HEAD-LOOP-1/2).** For `HEAD`, both the HTTP server and the HTTP client resent the header block in a loop until the peer closed the connection: keep-alive clients read the extra copies as the next response, and `TCrossHttpClient` HEAD requests reached the server dozens of times. Fixed in fork v1.0.12; reported upstream as [#203](https://github.com/winddriver/Delphi-Cross-Socket/issues/203), still open. With upstream `winddriver/Delphi-Cross-Socket`, this provider (v1.0.23+) no longer crashes on the resulting disconnects, but the resent headers remain until upstream fixes #203.
+  - **`SetCipherList` was superseded.** Upstream implemented the same capability under version-specific names: `SetTls12CipherSuites` (→ `SSL_CTX_set_cipher_list`) and `SetTls13CipherSuites` (→ `SSL_CTX_set_ciphersuites`), which the single fork method cannot express. See [PR #200](https://github.com/winddriver/Delphi-Cross-Socket/pull/200). This provider has called `SetTls12CipherSuites` since v1.0.23, so `SSLCipherList` works against upstream too. **Fork v1.0.15 removed `SetCipherList` entirely** — the deprecated delegation is gone, so that release is breaking for any caller still using it (provider v1.0.22 and earlier). TLS 1.3 cipher suites (`SetTls13CipherSuites`) are not surfaced as a provider option yet.
+  - **PATCH-CSHTTP-3 was rejected on substance, and fork v1.0.13 removed it.** See [PR #201](https://github.com/winddriver/Delphi-Cross-Socket/pull/201). It re-sent a `TCrossHttpClient` request once after a connection failure, and every point of the maintainer's review held against the fork's code: it could replay a POST (zero response bytes do not prove the server did not run it); the delayed retry ran on an unmanaged thread outside cancellation and client shutdown; a retry could wait behind the connection limit until an idle connection timed out, or indefinitely with `Idleout = 0`; it also retried parse and compression failures; and it `Writeln`ed full request URLs, query string included. The failures it was written for had other causes, since fixed. From v1.0.13 a connection failure reaches the caller, as with upstream, and retrying is the caller's decision. **Fork v1.0.7–v1.0.12 still contain it**, which is why this provider required `>=1.0.13` from v1.0.24; the floor is `>=1.0.14` from v1.0.25.
+  - **HEAD resend-loop fix (FIX-HEAD-LOOP-1/2).** For `HEAD`, both the HTTP server and the HTTP client resent the header block in a loop until the peer closed the connection: keep-alive clients read the extra copies as the next response, and `TCrossHttpClient` HEAD requests reached the server dozens of times. Fixed in fork v1.0.12; reported upstream as [#203](https://github.com/winddriver/Delphi-Cross-Socket/issues/203) — still open, but now with a fix filed against it as [PR #205](https://github.com/winddriver/Delphi-Cross-Socket/pull/205). With upstream `winddriver/Delphi-Cross-Socket`, this provider (v1.0.23+) no longer crashes on the resulting disconnects, but the resent headers remain until upstream fixes #203.
 
   If you do not need the HEAD fix, upstream `winddriver/Delphi-Cross-Socket` works: `SSLCipherList` already uses upstream's `SetTls12CipherSuites`.
 
@@ -448,7 +449,7 @@ There are two supported install paths.
 boss install github.com/freitasjca/horse-provider-crosssocket
 ```
 
-This pulls `HashLoad/horse` (≥ 3.3.3) and `horse-provider-crosssocket` into `modules/`. Delphi-Cross-Socket is **not** pulled by Boss — it must be cloned manually (Step 2).
+This pulls `HashLoad/horse` (≥ 3.3.10) and `horse-provider-crosssocket` into `modules/`. Delphi-Cross-Socket is **not** pulled by Boss — it must be cloned manually (Step 2).
 
 **Step 2 — Clone the Delphi-Cross-Socket fork manually:**
 
@@ -517,7 +518,7 @@ end.
 
 That is all. Every existing middleware (`horse-jwt`, `horse-cors`, `horse-jhonson`, etc.) continues to work without modification because the provider only replaces the transport layer.
 
-> **Note:** This provider now depends directly on `HashLoad/horse` ≥3.3.3. The `freitasjca/horse` fork is retired — all required changes are in the official upstream. The `HORSE_CROSSSOCKET` define continues to work exactly as before.
+> **Note:** This provider now depends directly on `HashLoad/horse` ≥3.3.10. The `freitasjca/horse` fork is retired — all required changes are in the official upstream. The `HORSE_CROSSSOCKET` define continues to work exactly as before.
 
 ---
 
@@ -700,6 +701,74 @@ THorse.Post('/report',
 The worker pool is bounded at **4 096 queued tasks** by default. When the queue is full, `Submit` raises `EHorseException(503)` so the caller can send an appropriate response. The pool starts 4 worker threads and can grow to 64.
 
 > **Important:** Never use `Req.Body` inside a worker-pool closure without copying it first. The stream is a non-owning reference into CrossSocket's socket buffer and may be released when the pipeline returns.
+
+---
+
+## Graceful shutdown
+
+`StopListenGraceful(ATimeoutMS)` stops the server, waits for requests already in
+flight to finish, and **delivers their responses** before tearing the transport down.
+It is not the same call as `StopListen`, which is abrupt and unchanged.
+
+```pascal
+THorse.StopListenGraceful(5000);   // wait up to 5 s for in-flight work
+```
+
+Implemented in **provider v1.0.25** (FIX-CS-GRACEFUL-1). Before that release this
+provider had no override, so it inherited Horse's abstract base, which **discards the
+timeout**: a shutdown fired 800 ms into a 5 s request returned after ~4200 ms — bounded
+by neither the argument nor `Config.DrainTimeoutMs` — and the client lost its response
+the instant shutdown began. Now the same scenario returns in 800–832 ms with the reply
+intact.
+
+> **Requires Horse >= 3.3.10.** On earlier releases `THorseInstance.StopListenGraceful`
+> called its own `StopListen` and bypassed every provider override, so this works only
+> when called directly on `THorseProviderCrossSocket` — through `THorse` it is silently
+> inert, with no error. Fixed upstream in
+> [HashLoad/horse#590](https://github.com/HashLoad/horse/pull/590), released in 3.3.10.
+
+### Two limitations, stated rather than implied
+
+This is why the feature table marks this row **partial** rather than a plain tick.
+
+**1. New connections are still accepted during the drain.** A textbook graceful
+shutdown closes the listening socket first. In Delphi-Cross-Socket, calling
+`CloseAllListens` *destroys the in-flight response body* — the headers go out, the body
+never does, and the client reads `200` with an empty body and **no error at all**,
+because `Connection: close` makes a FIN a legal end of message. So the listener is left
+open deliberately. Refuse new work at the application layer if you need it:
+
+```pascal
+THorse.Use(
+  procedure(AReq: THorseRequest; ARes: THorseResponse; ANext: TNextProc)
+  begin
+    if THorse.IsShuttingDown then
+      ARes.Status(THTTPStatus.ServiceUnavailable).Send('shutting down')
+    else
+      ANext;
+  end);
+```
+
+ICS's equivalent call (`MultiClose`) is safe, so this is specific to
+Delphi-Cross-Socket, not a property of graceful shutdown in general.
+
+**2. ~~A very large response may still be truncated.~~ Fixed in v1.0.26
+(FIX-CS-DEFER-1 + -2).** The response used to be handed to an async send while the drain
+counter was decremented as soon as the pipeline returned, so the counter could reach zero
+with bytes still queued; a 100 ms settle covered that window approximately. The one-shot
+path now defers the decrement to CrossSocket's **send-completion callback**, exactly as
+the streaming path always did, so the counter reaching zero *means* the bytes have left —
+including for a response larger than the socket buffer, which no fixed delay could ever
+have covered.
+
+Measured, both arms at `HORSE_CS_SETTLE_MS=0`: **4 failures in 60 runs before, 0 in 180
+after** (Fisher one-tailed p = 0.0036). Every pre-change failure showed
+`Content-Length: 4` with a zero-length body — headers delivered, body lost, drain
+reporting success, no error at the client. The settle default is now **0**, worth ~100 ms
+off every graceful shutdown. `HORSE_CS_SETTLE_MS` still exists, for characterisation only.
+
+So one limitation remains, not two: **new connections are still accepted during the
+drain**.
 
 ---
 

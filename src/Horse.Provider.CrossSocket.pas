@@ -227,7 +227,11 @@ uses
   // [BUG-2] EHorseCallbackInterrupted — the normal pipeline-end signal
   Horse.Exception.Interrupted,
   // [STREAM-2] per-request streaming engine (PATCH-STREAM-1 reference impl)
-  Horse.Provider.CrossSocket.StreamWriter;
+  Horse.Provider.CrossSocket.StreamWriter,
+  // [FIX-CS-DEFER-1] ICrossConnection names a parameter of the completion
+  // closure below. Implementation-only, so it belongs here rather than in the
+  // interface uses clause.
+  Net.CrossSocket.Base;
 
 { THorseProviderCrossSocket }
 
@@ -576,8 +580,47 @@ begin
           LDeferred := True;
       end
       else
+      begin
+        // [FIX-CS-DEFER-1] Non-streaming responses defer the SAME way streaming
+        // ones do. Before this, the pipeline decremented the drain counter in its
+        // finally while CrossSocket's async send still had bytes queued, so the
+        // counter could reach zero with the response not yet on the wire — and a
+        // graceful shutdown that believed the count would tear the socket down
+        // mid-body. The provider covered that window with a 100 ms sleep, which
+        // was a mitigation, not a fix: a response larger than the socket buffer
+        // outlives any fixed delay.
+        //
+        // Now the completion callback owns both pool release and drain
+        // accounting, so the counter reaches zero only once the bytes are gone.
+        //
+        // THE RESULT MUST BE HONOURED. FlushDeferred returns False when nothing
+        // was sent (middleware already called ICrossHttpResponse.Send directly,
+        // so ACrossRes.Sent was True). No send means no completion callback ever
+        // fires, so deferring on False would leak the counter and hang the drain
+        // until the timeout expires. On False we fall through to the inline
+        // release in the finally blocks, which is correct precisely because
+        // nothing is in flight.
+        //
+        // The callback may run SYNCHRONOUSLY on this thread, inside the call
+        // below, before it returns — TCrossHttpResponse._Send's two early-exit
+        // paths invoke it with ASuccess=False before exiting. That is safe here
+        // only because nothing after this touches Ctx: LDeferred is assigned from
+        // the result, and both finally blocks then skip.
+        //
         // [Config] Pass ServerBanner so the Server: header reflects the config
-        TResponseBridge.Flush(Ctx.Response, ACrossRes, Banner);
+        if TResponseBridge.FlushDeferred(Ctx.Response, ACrossRes, Banner,
+             procedure(const AConnection: ICrossConnection; const ASuccess: Boolean)
+             begin
+               // ASuccess is deliberately ignored: a failed send still ends the
+               // request's hold on the pool and the drain counter. Treating a
+               // failure as "still in flight" would hang shutdown on every client
+               // that hung up early.
+               THorseContextPool.Release(Ctx);
+               if Assigned(FServer) then
+                 FServer.DecrementActive;
+             end) then
+          LDeferred := True;
+      end;
 
     finally
       // [STREAM-2] a deferred context is released by the stream, not here
