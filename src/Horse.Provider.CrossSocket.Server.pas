@@ -529,12 +529,19 @@ begin
   //    Horse.Provider.Console carries the same 100 ms sleep after its drain loop
   //    and before it clears Active, for the same reason.
   //
-  //    This is still a MITIGATION, not a proof. The principled fix is to defer
-  //    DecrementActive to the send completion, which the streaming path already
-  //    does ([STREAM-2] TryDeferActive in the provider) — then the drain would
-  //    know the response had actually left and no delay would be needed. Until
-  //    the one-shot path does the same, a response larger than the socket buffer
-  //    can still outlive this window.
+  //    [FIX-CS-DEFER-1] The principled fix is now IN: the one-shot path defers
+  //    DecrementActive to the send completion, the way the streaming path always
+  //    did ([STREAM-2] TryDeferActive). FActiveConns now reaches zero only once
+  //    CrossSocket reports the send finished, so the window this sleep covers
+  //    should no longer exist — including for a response larger than the socket
+  //    buffer, which no fixed delay could ever have covered.
+  //
+  //    THE SLEEP STAYS AT 100 ms UNTIL THAT IS MEASURED, NOT BECAUSE IT IS STILL
+  //    NEEDED. Dropping the default in the same change that removes the need for
+  //    it would leave nothing to attribute a result to. The control is direct:
+  //    HORSE_CS_SETTLE_MS=0 failed about one run in two before, so a clean 5/5 at
+  //    0 ms is the evidence, and the default can follow in its own commit.
+  //    Anything short of that and this comment is wrong rather than cautious.
   Sleep(SettleMs);
 
   // 4. [FIX-CS-GRACEFUL-1b] Disconnect GRACEFULLY, which is a different

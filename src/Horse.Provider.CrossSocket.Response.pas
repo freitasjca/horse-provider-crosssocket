@@ -115,6 +115,10 @@ uses
 {$ENDIF}
   Net.CrossHttpServer,
   Net.CrossHttpParams,
+  // [FIX-CS-DEFER-1] TCrossConnectionCallback is declared here, and it appears in
+  // a signature in the INTERFACE section - so this unit belongs in the interface
+  // uses clause, not implementation (E2003 otherwise).
+  Net.CrossSocket.Base,
   Horse.Response,
   Horse.Core.Cookie;
 
@@ -128,6 +132,30 @@ type
       const ACrossRes:       ICrossHttpResponse;
       const AServerBanner:   string
     );
+
+    /// [FIX-CS-DEFER-1] As Flush, but attaches AOnComplete to the async send so
+    /// the caller can defer pool release and drain accounting to SEND COMPLETION
+    /// rather than approximating it with a sleep.
+    ///
+    /// Returns True when a send was issued, in which case AOnComplete is
+    /// guaranteed to fire EXACTLY ONCE - on success or failure. That guarantee is
+    /// CrossSocket's, not ours: TCrossHttpResponse._Send has two early-exit paths
+    /// and both call ACallback(FConnection, False) before exiting.
+    ///
+    /// Returns False when nothing was sent - middleware already called
+    /// ICrossHttpResponse.Send directly, so ACrossRes.Sent was already True. Then
+    /// AOnComplete NEVER fires and the caller MUST release inline; deferring on a
+    /// False result leaks the drain counter until the timeout expires.
+    ///
+    /// AOnComplete may run SYNCHRONOUSLY, on this thread, before this function
+    /// returns (the early-exit paths above do exactly that). Callers must not
+    /// touch anything the callback frees after calling this.
+    class function FlushDeferred(
+            AHorseRes:       THorseResponse;
+      const ACrossRes:       ICrossHttpResponse;
+      const AServerBanner:   string;
+      const AOnComplete:     TCrossConnectionCallback
+    ): Boolean;
 
   private
     class function  SanitiseHeaderValue(const AValue: string): string;
@@ -146,7 +174,8 @@ type
                             ARaw: {$IF DEFINED(FPC)}TResponse{$ELSE}TWebResponse{$ENDIF});
     class procedure WriteBody(
                             AHorseRes:       THorseResponse;
-                      const ACrossRes:       ICrossHttpResponse);
+                      const ACrossRes:       ICrossHttpResponse;
+                      const AOnComplete:     TCrossConnectionCallback);
   end;
 
 implementation
@@ -165,6 +194,19 @@ class procedure TResponseBridge.Flush(
   const ACrossRes:       ICrossHttpResponse;
   const AServerBanner:   string
 );
+begin
+  // [FIX-CS-DEFER-1] Unchanged behaviour for every existing caller: no callback,
+  // so the send is fire-and-forget exactly as before. The result is discarded
+  // because a caller that does not defer has nothing to do with it.
+  FlushDeferred(AHorseRes, ACrossRes, AServerBanner, nil);
+end;
+
+class function TResponseBridge.FlushDeferred(
+        AHorseRes:       THorseResponse;
+  const ACrossRes:       ICrossHttpResponse;
+  const AServerBanner:   string;
+  const AOnComplete:     TCrossConnectionCallback
+): Boolean;
 var
   CT:      string;
   LRawRes: {$IF DEFINED(FPC)}TResponse{$ELSE}TWebResponse{$ENDIF};
@@ -172,6 +214,11 @@ begin
   // [IMP-4] Do not attempt to write a response that CrossSocket has already
   // sent (e.g. by middleware that called ICrossHttpResponse.Send directly).
   // Writing again would produce a double-send or corrupt framing.
+  //
+  // [FIX-CS-DEFER-1] This is the ONE path that issues no send, so AOnComplete
+  // will never fire. Returning False is what tells the caller to release inline
+  // instead of waiting for a completion that is not coming.
+  Result := False;
   if ACrossRes.Sent then Exit;
 
   // Status — THorseResponse.Status (no args) is nil-guarded via PATCH-RES-4
@@ -196,7 +243,11 @@ begin
     ACrossRes.ContentType := CT;
   // If still empty CrossSocket will use its own default
 
-  WriteBody(AHorseRes, ACrossRes);
+  // [FIX-CS-DEFER-1] WriteBody is a chain of `if ... Send ... Exit` branches with
+  // an unconditional Send(empty) at the end, so exactly one send is always issued
+  // from here - which is what makes the True below safe to promise.
+  WriteBody(AHorseRes, ACrossRes, AOnComplete);
+  Result := True;
 end;
 
 // ── [SEC-19] ─────────────────────────────────────────────────────────────────
@@ -408,7 +459,8 @@ end;
 // ── [SEC-24][IMP-6] ──────────────────────────────────────────────────────────
 class procedure TResponseBridge.WriteBody(
         AHorseRes:       THorseResponse;
-  const ACrossRes:       ICrossHttpResponse
+  const ACrossRes:       ICrossHttpResponse;
+  const AOnComplete:     TCrossConnectionCallback
 );
 var
   Buf:      TBytes;
@@ -436,7 +488,7 @@ begin
       if Length(LRawBody) > 0 then
         Move(LRawBody[1], Buf[0], Length(LRawBody));
       ACrossRes.Header['Content-Length'] := IntToStr(Length(Buf));
-      ACrossRes.Send(Buf);
+      ACrossRes.Send(Buf, AOnComplete);
       Exit;
     end;
   end;
@@ -460,10 +512,10 @@ begin
   begin
     Buf := AHorseRes.BodyBytes;
     ACrossRes.Header['Content-Length'] := IntToStr(Length(Buf));
-    ACrossRes.Send(Buf);
+    ACrossRes.Send(Buf, AOnComplete);
     Exit;
   end;
-																					 
+
   // BodyText: PATCH-RES-4 shadow field (empty string when not set)
   if AHorseRes.BodyText <> '' then
   begin
@@ -471,7 +523,7 @@ begin
     ACrossRes.Header['Content-Length'] :=
       IntToStr(TEncoding.UTF8.GetByteCount(AHorseRes.BodyText));
     // Send(string) confirmed overload — CrossSocket handles UTF-8 encoding
-    ACrossRes.Send(AHorseRes.BodyText);
+    ACrossRes.Send(AHorseRes.BodyText, AOnComplete);
     Exit;
   end;
 
@@ -494,7 +546,7 @@ begin
       if Length(LRawBody) > 0 then
         Move(LRawBody[1], Buf[0], Length(LRawBody));
       ACrossRes.Header['Content-Length'] := IntToStr(Length(Buf));
-      ACrossRes.Send(Buf);
+      ACrossRes.Send(Buf, AOnComplete);
       Exit;
     end;
 
@@ -503,7 +555,7 @@ begin
     begin
       ACrossRes.Header['Content-Length'] :=
         IntToStr(TEncoding.UTF8.GetByteCount(LContent));
-      ACrossRes.Send(LContent);
+      ACrossRes.Send(LContent, AOnComplete);
       Exit;
     end;
 
@@ -524,7 +576,7 @@ begin
   // Content-Length is set automatically by CrossSocket's _CreateHeader.
   if AHorseRes.Status >= 400 then
   begin
-    ACrossRes.Send(IntToStr(AHorseRes.Status));
+    ACrossRes.Send(IntToStr(AHorseRes.Status), AOnComplete);
     Exit;
   end;
 
@@ -533,7 +585,7 @@ begin
   ACrossRes.Header['Content-Length'] := '0';
   // Send(TBytes) with an empty array confirmed overload
   Buf := nil;
-  ACrossRes.Send(Buf);
+  ACrossRes.Send(Buf, AOnComplete);
 end;
 
 end.
