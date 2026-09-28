@@ -219,7 +219,14 @@ const
   // [FIX-CS-GRACEFUL-1a] Grace period between "no requests in flight" and
   // teardown, covering CrossSocket's async send tail. Same value and same
   // reason as Horse.Provider.Console's post-drain TThread.Sleep(100).
-  DEFAULT_SETTLE_MS = 100;
+  // [FIX-CS-DEFER-2] 0, not 100. FIX-CS-DEFER-1 moved DecrementActive to the send
+  // completion, so the drain counter reaching zero now MEANS the bytes have left -
+  // there is no window left for a sleep to cover. Measured A/B at settle 0:
+  // 4 failures in 60 runs before that change, 0 in 180 after (p = 0.0036), every
+  // failure showing Content-Length: 4 with body length 0. The 180 runs that proved
+  // it ran at 0, so this default is the configuration that was validated, not a
+  // newly untested one.
+  DEFAULT_SETTLE_MS = 0;
 
 var
   // Overridable ONLY so the window can be characterised without a rebuild:
@@ -536,12 +543,12 @@ begin
   //    should no longer exist — including for a response larger than the socket
   //    buffer, which no fixed delay could ever have covered.
   //
-  //    THE SLEEP STAYS AT 100 ms UNTIL THAT IS MEASURED, NOT BECAUSE IT IS STILL
-  //    NEEDED. Dropping the default in the same change that removes the need for
-  //    it would leave nothing to attribute a result to. The control is direct:
-  //    HORSE_CS_SETTLE_MS=0 failed about one run in two before, so a clean 5/5 at
-  //    0 ms is the evidence, and the default can follow in its own commit.
-  //    Anything short of that and this comment is wrong rather than cautious.
+  //    [FIX-CS-DEFER-2] MEASURED, so the default is now 0 and this Sleep is a no-op
+  //    unless HORSE_CS_SETTLE_MS asks for one. A/B at settle 0: 4 failures in 60 runs
+  //    before FIX-CS-DEFER-1, 0 in 180 after, p = 0.0036 - and all four failures
+  //    showed Content-Length: 4 with body length 0, which is this window and nothing
+  //    else. The call is kept rather than deleted so the knob still exists for
+  //    characterisation if a future platform reopens the question.
   Sleep(SettleMs);
 
   // 4. [FIX-CS-GRACEFUL-1b] Disconnect GRACEFULLY, which is a different
