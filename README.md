@@ -28,7 +28,7 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 | HTTP request-smuggling protection ¹ | ✗ | ✓ |
 | Pre-pipeline input validation ¹ | ✗ | ✓ |
 | Security response headers ¹ | ✗ | ✓ |
-| Graceful shutdown drain | ✓ | ✓ (partial — see [Graceful shutdown](#graceful-shutdown)) |
+| Graceful shutdown drain | ✓ | ✓ (partial — accepts during drain; see [Graceful shutdown](#graceful-shutdown)) |
 
 ¹ CrossSocket enforces these **before** the Horse pipeline via `TRequestBridge.Populate` and `TResponseBridge.Flush`. Equivalent middleware for the Indy path is provided in the [Security Model](#security-model) section.
 
@@ -752,15 +752,23 @@ THorse.Use(
 ICS's equivalent call (`MultiClose`) is safe, so this is specific to
 Delphi-Cross-Socket, not a property of graceful shutdown in general.
 
-**2. A very large response may still be truncated.** The response is handed to an async
-send, and the drain counter is decremented when the pipeline returns — so the counter can
-reach zero with bytes still queued. A 100 ms settle covers that window and is
-**load-bearing, not padding**: with it set to 0, the reply arrives on one run and comes
-back as `200` with an empty body on the next. A response larger than the socket buffer
-could still outlive it. `HORSE_CS_SETTLE_MS` overrides the value, for characterisation
-only.
+**2. ~~A very large response may still be truncated.~~ Fixed in v1.0.26
+(FIX-CS-DEFER-1 + -2).** The response used to be handed to an async send while the drain
+counter was decremented as soon as the pipeline returned, so the counter could reach zero
+with bytes still queued; a 100 ms settle covered that window approximately. The one-shot
+path now defers the decrement to CrossSocket's **send-completion callback**, exactly as
+the streaming path always did, so the counter reaching zero *means* the bytes have left —
+including for a response larger than the socket buffer, which no fixed delay could ever
+have covered.
 
-Both are tracked; neither is hidden by the implementation.
+Measured, both arms at `HORSE_CS_SETTLE_MS=0`: **4 failures in 60 runs before, 0 in 180
+after** (Fisher one-tailed p = 0.0036). Every pre-change failure showed
+`Content-Length: 4` with a zero-length body — headers delivered, body lost, drain
+reporting success, no error at the client. The settle default is now **0**, worth ~100 ms
+off every graceful shutdown. `HORSE_CS_SETTLE_MS` still exists, for characterisation only.
+
+So one limitation remains, not two: **new connections are still accepted during the
+drain**.
 
 ---
 
