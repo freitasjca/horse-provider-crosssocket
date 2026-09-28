@@ -188,8 +188,19 @@ type
     // AHost: '' or '0.0.0.0' = all interfaces (IPv4 + IPv6); anything else
     // becomes the CrossSocket bind Addr. Set by the Listen overload family.
     procedure Start(const APort: Integer; const AHost: string = '');
-    // [SEC-6] Synchronous stop — waits up to Config.DrainTimeoutMs
+    // [SEC-6] Synchronous stop — waits up to Config.DrainTimeoutMs.
+    // NOTE the ordering defect this carries, measured 10/10 on 2026-09-27:
+    // TCrossServer.Stop is CloseAll + StopLoop, and CloseAll closes live
+    // CONNECTIONS as well as listeners — so an in-flight request loses its
+    // socket before the drain wait below is even reached. Use StopGraceful for
+    // a shutdown that delivers the reply.
     procedure Stop;
+
+    // [FIX-CS-GRACEFUL-1] Stop accepting, let in-flight requests finish AND
+    // reply, then tear down. Bounded by ATimeoutMS (<= 0 falls back to
+    // Config.DrainTimeoutMs). This is the drain THorseProviderCrossSocket
+    // .StopListenGraceful needs; Stop above cannot provide it.
+    procedure StopGraceful(const ATimeoutMS: Integer);
 
     // Called by the provider to bracket every in-flight request
     procedure IncrementActive; inline;
@@ -203,6 +214,33 @@ type
   end;
 
 implementation
+
+const
+  // [FIX-CS-GRACEFUL-1a] Grace period between "no requests in flight" and
+  // teardown, covering CrossSocket's async send tail. Same value and same
+  // reason as Horse.Provider.Console's post-drain TThread.Sleep(100).
+  DEFAULT_SETTLE_MS = 100;
+
+var
+  // Overridable ONLY so the window can be characterised without a rebuild:
+  // HORSE_CS_SETTLE_MS=0 / 100 / 1000 answers whether a lost response body is a
+  // flush race (more time fixes it) or something actively discarding it (more
+  // time changes nothing). A single value cannot distinguish those.
+  GSettleMs: Integer = -1;
+
+// Read once; an unset or unparseable value keeps the default.
+function SettleMs: Integer;
+var
+  LRaw: string;
+begin
+  if GSettleMs < 0 then
+  begin
+    LRaw := GetEnvironmentVariable('HORSE_CS_SETTLE_MS');
+    if (LRaw = '') or not TryStrToInt(Trim(LRaw), GSettleMs) or (GSettleMs < 0) then
+      GSettleMs := DEFAULT_SETTLE_MS;
+  end;
+  Result := GSettleMs;
+end;
 
 
 { THorseCrossSocketServer }
@@ -400,6 +438,124 @@ begin
   else
     FServer.Addr := AHost;
   FServer.Start;
+end;
+
+// [FIX-CS-GRACEFUL-1] ─────────────────────────────────────────────────────────
+// Wait for in-flight work FIRST, bounded by the CALLER's timeout, and only then
+// tear down. That single reordering is the fix; the steps below say what was
+// tried beyond it and what each one cost.
+//
+// What Stop does instead: FServer.Stop is TCrossServer.Stop = CloseAll +
+// StopLoop, and TCrossSocketBase.CloseAll = CloseAllListens +
+// CloseAllConnections. It closes every live connection and only THEN reaches its
+// drain wait, so an in-flight request loses its socket before anything waits for
+// it. Measured across 10 runs and two builds: a shutdown fired 800 ms into a
+// 5000 ms request returned after 4193-4203 ms — the rest of the request, bounded
+// by NEITHER the argument nor Config.DrainTimeoutMs, because the blocking step
+// was StopLoop waiting on an IO thread that could not observe its shutdown flag
+// until the handler returned — and the client lost its response at 809-819 ms,
+// the instant shutdown began.
+//
+// After this method: 810-820 ms for 700 ms of remaining work, reply delivered.
+//
+// One earlier claim in this comment was WRONG and is worth keeping as a warning:
+// that splitting CloseAll and calling CloseAllListens alone would "stop accepts
+// and leave established connections alive". It stops accepts, but it also costs
+// the in-flight response — see step 1. Three explanations were proposed and
+// falsified before a step-by-step bisect found it; symptom-to-mechanism
+// reasoning produced a plausible story every time and the wrong fix every time.
+procedure THorseCrossSocketServer.StopGraceful(const ATimeoutMS: Integer);
+var
+  LTimeout: Integer;
+begin
+  if not FServer.Active then
+    Exit;
+
+  LTimeout := ATimeoutMS;
+  if LTimeout <= 0 then
+    LTimeout := FConfig.DrainTimeoutMs;
+
+  // 1. NO CloseAllListens — and this is the surprise the bisect produced.
+  //
+  //    Stopping the listener is what a graceful shutdown is supposed to do
+  //    first, and it is what this step used to do. It also DESTROYS the
+  //    in-flight response. Measured by skipping one step at a time, everything
+  //    else held constant:
+  //
+  //      skip CloseAllListens   -> body 'done' delivered, 820 ms   PASS
+  //      skip DisconnectAll     -> 12030 aborted                   FAIL
+  //      skip BOTH              -> body 'done' delivered, 810 ms   PASS
+  //
+  //    So closing the LISTENING socket costs an already-accepted connection its
+  //    pending body write, while the response headers still go out — the client
+  //    sees 200 with Content-Length: 4 and zero body bytes, and WinHTTP does not
+  //    even call that an error because Connection: close makes a FIN a legal end
+  //    of message. A settle sweep of 0 / 100 / 1000 ms changed nothing, so this
+  //    is not a flush race: the body is never written at any delay.
+  //
+  //    That looks like a DCS-level coupling between listener teardown and the
+  //    send path of accepted connections. It is not diagnosed further here, and
+  //    this provider stops calling it rather than working around a mechanism we
+  //    have not yet located.
+  //
+  //    THE TRADE-OFF, stated plainly: without it the server keeps ACCEPTING
+  //    during the drain, so new requests can arrive while we wait. The right
+  //    place to refuse new work is the pipeline — Horse already exposes
+  //    IsShuttingDown, and answering 503 there is the idiom k8s expects —
+  //    NOT closing the listening socket, which costs replies we promised.
+  //    Deliberately left for a separate change, because it belongs in
+  //    ExecutePipeline, not here.
+
+  // 2. Let in-flight requests finish and write their replies. FDrainEvent is
+  //    manual-reset and starts signalled; IncrementActive resets it on the
+  //    first concurrent request and DecrementActive signals it at zero.
+  if FActiveConns > 0 then
+    FDrainEvent.WaitFor(LTimeout);
+
+  // 3. [FIX-CS-GRACEFUL-1a] Settle BEFORE disconnecting, and the order is the
+  //    point. TResponseBridge.Flush hands the body to CrossSocket's ASYNC send
+  //    and the pipeline decrements the drain counter in its finally, so
+  //    FActiveConns reaches zero microseconds BEFORE the bytes are on the wire.
+  //    A disconnect at that instant is graceful about a response that has not
+  //    been written yet.
+  //
+  //    Measured, and this is what the order costs: with the disconnect first the
+  //    client got `status=200 body=` at 1517 ms — headers delivered, body lost,
+  //    no error at all, because the FIN arrived cleanly between the header send
+  //    and the body send. The step before that got 12030 (aborted); the step
+  //    before that 12152 (severed). Three different symptoms from one ordering
+  //    question.
+  //
+  //    Horse.Provider.Console carries the same 100 ms sleep after its drain loop
+  //    and before it clears Active, for the same reason.
+  //
+  //    This is still a MITIGATION, not a proof. The principled fix is to defer
+  //    DecrementActive to the send completion, which the streaming path already
+  //    does ([STREAM-2] TryDeferActive in the provider) — then the drain would
+  //    know the response had actually left and no delay would be needed. Until
+  //    the one-shot path does the same, a response larger than the socket buffer
+  //    can still outlive this window.
+  Sleep(SettleMs);
+
+  // 4. [FIX-CS-GRACEFUL-1b] Disconnect GRACEFULLY, which is a different
+  //    operation from closing and the difference is the rest of the bug. DCS
+  //    documents the two side by side on ICrossSocket:
+  //
+  //      CloseAllConnections   关闭所有连接 - "正在发送中的数据将会丢失"
+  //                            (data being sent WILL BE LOST)
+  //      DisconnectAll         断开所有连接 - "正在发送中的数据会被送达"
+  //                            (data being sent WILL BE DELIVERED)
+  //
+  //    FServer.Stop reaches the lossy one via CloseAll, so a reply the handler
+  //    had already written was discarded at teardown: with steps 1-2 only, the
+  //    drain timing became correct (815 ms for 700 ms of work) and the client
+  //    still failed — but with 12030 "connection terminated abnormally" instead
+  //    of 12152 "invalid or unrecognized response", i.e. answered-then-aborted
+  //    rather than severed-before-answering. That change of error located this.
+  FServerRef.DisconnectAll;
+
+  // 5. Full teardown: closes whatever remains and joins the IO loop.
+  FServer.Stop;
 end;
 
 procedure THorseCrossSocketServer.Stop;
