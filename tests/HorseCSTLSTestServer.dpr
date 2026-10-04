@@ -107,6 +107,21 @@ begin
       Config.SSLVerifyPeer := True;
     end;
 
+    // [TLSOPT-3] run-tls-tests.bat pass 3 (openssl s_client peer).
+    //   suites13     -> TLS 1.3 restricted to CHACHA20
+    //   suites13typo -> a misspelled suite beside a valid one: must not start
+    //   minver13     -> TLS 1.3 only: must not start (no DCS setter yet)
+    //   minver12     -> TLS 1.2 floor: starts (DCS already enforces it)
+    if SameText(ParamStr(1), 'suites13') then
+      Config.SSLCipherSuitesTLS13 := 'TLS_CHACHA20_POLY1305_SHA256'
+    else if SameText(ParamStr(1), 'suites13typo') then
+      Config.SSLCipherSuitesTLS13 :=
+        'TLS_AES_256_GCM_SHA348:TLS_CHACHA20_POLY1305_SHA256'
+    else if SameText(ParamStr(1), 'minver13') then
+      Config.SSLMinVersion := htvTLS13
+    else if SameText(ParamStr(1), 'minver12') then
+      Config.SSLMinVersion := htvTLS12;
+
     RegisterRoutes;
 
     Writeln(Format('[CSTLSTest] certs: %s', [CertDir]));

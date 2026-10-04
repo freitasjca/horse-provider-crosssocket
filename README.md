@@ -295,6 +295,8 @@ type
     SSLCACertFile:    string;
     SSLVerifyPeer:    Boolean;
     SSLCipherList:    string;
+    SSLCipherSuitesTLS13: string;               // Horse >= the release carrying #597
+    SSLMinVersion:    THorseTlsMinVersion;      // ditto
     ServerBanner:     string;
 
     class function Default: THorseCrossSocketConfig; static;
@@ -319,6 +321,8 @@ begin
   Result.SSLCACertFile    := '';
   Result.SSLVerifyPeer    := False;
   Result.SSLCipherList    := '';
+  Result.SSLCipherSuitesTLS13 := '';
+  Result.SSLMinVersion    := htvDefault;
   Result.ServerBanner     := '';
 end;
 
@@ -393,7 +397,7 @@ No existing method is removed, renamed, or given a different signature. Existing
 - **Delphi-Cross-Socket bug fixes and mTLS** (`AddCACertificateFile` + `SetVerifyPeer`, password-in-`SetPrivateKeyFile`, CL=0 parser fix) are merged into `winddriver/Delphi-Cross-Socket` upstream as of 2026-08. They are also included in the fork release [`freitasjca/Delphi-Cross-Socket v1.0.13`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.13), which Boss resolves automatically.
 - **Fork-only changes** are in `freitasjca/Delphi-Cross-Socket` v1.0.13. `SetCipherList` and PATCH-CSHTTP-3 were proposed upstream and **both were closed unmerged on 2026-09-06**; the fork has since reduced `SetCipherList` to a deprecated delegation and removed PATCH-CSHTTP-3. The HEAD resend-loop fix is newer and reported upstream:
 
-  - **`SetCipherList` was superseded.** Upstream implemented the same capability under version-specific names: `SetTls12CipherSuites` (→ `SSL_CTX_set_cipher_list`) and `SetTls13CipherSuites` (→ `SSL_CTX_set_ciphersuites`), which the single fork method cannot express. See [PR #200](https://github.com/winddriver/Delphi-Cross-Socket/pull/200). This provider has called `SetTls12CipherSuites` since v1.0.23, so `SSLCipherList` works against upstream too. **Fork v1.0.15 removed `SetCipherList` entirely** — the deprecated delegation is gone, so that release is breaking for any caller still using it (provider v1.0.22 and earlier). TLS 1.3 cipher suites (`SetTls13CipherSuites`) are not surfaced as a provider option yet.
+  - **`SetCipherList` was superseded.** Upstream implemented the same capability under version-specific names: `SetTls12CipherSuites` (→ `SSL_CTX_set_cipher_list`) and `SetTls13CipherSuites` (→ `SSL_CTX_set_ciphersuites`), which the single fork method cannot express. See [PR #200](https://github.com/winddriver/Delphi-Cross-Socket/pull/200). This provider has called `SetTls12CipherSuites` since v1.0.23, so `SSLCipherList` works against upstream too. **Fork v1.0.15 removed `SetCipherList` entirely** — the deprecated delegation is gone, so that release is breaking for any caller still using it (provider v1.0.22 and earlier). Since provider v1.0.27, `SSLCipherSuitesTLS13` drives `SetTls13CipherSuites` (see *TLS 1.3 cipher suites & minimum version* below).
   - **PATCH-CSHTTP-3 was rejected on substance, and fork v1.0.13 removed it.** See [PR #201](https://github.com/winddriver/Delphi-Cross-Socket/pull/201). It re-sent a `TCrossHttpClient` request once after a connection failure, and every point of the maintainer's review held against the fork's code: it could replay a POST (zero response bytes do not prove the server did not run it); the delayed retry ran on an unmanaged thread outside cancellation and client shutdown; a retry could wait behind the connection limit until an idle connection timed out, or indefinitely with `Idleout = 0`; it also retried parse and compression failures; and it `Writeln`ed full request URLs, query string included. The failures it was written for had other causes, since fixed. From v1.0.13 a connection failure reaches the caller, as with upstream, and retrying is the caller's decision. **Fork v1.0.7–v1.0.12 still contain it**, which is why this provider required `>=1.0.13` from v1.0.24; the floor is `>=1.0.14` from v1.0.25.
   - **HEAD resend-loop fix (FIX-HEAD-LOOP-1/2).** For `HEAD`, both the HTTP server and the HTTP client resent the header block in a loop until the peer closed the connection: keep-alive clients read the extra copies as the next response, and `TCrossHttpClient` HEAD requests reached the server dozens of times. Fixed in fork v1.0.12; reported upstream as [#203](https://github.com/winddriver/Delphi-Cross-Socket/issues/203) — still open, but now with a fix filed against it as [PR #205](https://github.com/winddriver/Delphi-Cross-Socket/pull/205). With upstream `winddriver/Delphi-Cross-Socket`, this provider (v1.0.23+) no longer crashes on the resulting disconnects, but the resent headers remain until upstream fixes #203.
 
@@ -616,11 +620,37 @@ Cfg.SSLCipherList  := 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384
   provider passes the passphrase directly to `SetPrivateKeyFile(file, password)` — no separate `SetPrivateKeyPassword` call needed. OpenSSL parses it with a PEM password callback. Empty (default) keeps the unencrypted-key path.
 - **`SSLCipherList`** — override the **TLS 1.2** cipher list (`SSL_CTX_set_cipher_list`);
   raises if the string selects no ciphers. Empty keeps CrossSocket's built-in modern
-  default. TLS 1.3 cipher suites are not affected.
+  default. TLS 1.3 cipher suites are not affected. An `@SECLEVEL=` inside it sets the
+  context's security level, which TLS 1.3 handshakes also obey.
 
 > Like mTLS, both ride the **`Net.CrossSslSocket.*` patches** (tags `TLSOPT-1`/`TLSOPT-2`)
 > or the fork release. They are no-ops you can ignore on a plain unencrypted-key,
 > default-cipher setup.
+
+### TLS 1.3 cipher suites & minimum version (v1.0.27, TLSOPT-3)
+
+Both fields live in Horse core's `THorseCrossSocketConfig` (HashLoad/horse #597), so
+they need a Horse release that carries it.
+
+```delphi
+Cfg.SSLCipherSuitesTLS13 := 'TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256';
+Cfg.SSLMinVersion        := htvTLS12;   // htvDefault | htvTLS12 | htvTLS13
+```
+
+- **`SSLCipherSuitesTLS13`** — the TLS 1.3 suites, colon-separated, in priority order
+  (`SSL_CTX_set_ciphersuites` via DCS `SetTls13CipherSuites`). Empty keeps OpenSSL's
+  default. OpenSSL **silently drops** an unknown name when a valid one sits beside it,
+  so the provider checks every name against the five RFC 8446 suites first and
+  **raises at Listen, naming the bad one**.
+- **`SSLMinVersion`** — `htvDefault` and `htvTLS12` change nothing: DCS already fixes
+  the floor at TLS 1.2, and TLS 1.3 stays enabled. **`htvTLS13` raises at Listen**:
+  DCS has no public way to raise the minimum yet
+  ([winddriver/Delphi-Cross-Socket#207](https://github.com/winddriver/Delphi-Cross-Socket/pull/207)
+  adds one). The provider refuses rather than start a server that still accepts
+  TLS 1.2 while the config says TLS 1.3 only.
+
+Wire-tested by `scripts\run-tls-tests.bat` pass 3 (C0–C7, `openssl s_client` peer);
+see [`tests/TLS-TESTS.md`](tests/TLS-TESTS.md).
 
 ---
 
