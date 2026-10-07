@@ -10,8 +10,9 @@ REM
 REM  Defaults: Win64 Release
 REM
 REM  Test model:
-REM    HorseCSTestServer listens on 127.0.0.1:9100.
-REM    HorseCSTestClient runs 14 integration tests and exits with:
+REM    HorseCSTestServer listens on 127.0.0.1:9010.
+REM    HorseCSTestClient runs the integration suite (139 checks, 2026-10-07)
+REM    and exits with:
 REM      0  = all tests passed
 REM      N  = number of failed tests
 REM
@@ -28,9 +29,14 @@ set CONFIG=%~2
 if "%PLATFORM%"=="" set PLATFORM=Win64
 if "%CONFIG%"==""   set CONFIG=Release
 
-set SERVER_EXE=samples\tests\%PLATFORM%\%CONFIG%\HorseCSTestServer.exe
-set CLIENT_EXE=samples\tests\%PLATFORM%\%CONFIG%\HorseCSTestClient.exe
-set TEST_PORT=9100
+REM Where the test .dproj files put the binaries: DCC_ExeOutput is
+REM ..\..\..\bin\$(Platform)\$(Config), i.e. <repo-parent>\bin\..., the same
+REM default run-batch.bat uses. It used to read samples\tests\%PLATFORM%\%CONFIG%,
+REM which nothing builds into any more, so every run stopped at "not found"
+REM right after a successful build (2026-10-07).
+set SERVER_EXE=%~dp0..\..\bin\%PLATFORM%\%CONFIG%\HorseCSTestServer.exe
+set CLIENT_EXE=%~dp0..\..\bin\%PLATFORM%\%CONFIG%\HorseCSTestClient.exe
+set TEST_PORT=9010
 set HEALTH_URL=http://127.0.0.1:%TEST_PORT%/ping
 
 echo.

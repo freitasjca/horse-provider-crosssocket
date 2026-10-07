@@ -18,7 +18,7 @@ REM    4. Boss is in PATH
 REM    5. .dproj files exist
 REM    6. modules/ directory exists (boss install has been run)
 REM    7. Required module subdirectories exist
-REM    8. Port 9100 is not already in use (test port conflict check)
+REM    8. Port 9010 is not already in use (test port conflict check)
 REM ============================================================================
 
 set CONFIG=%~1
@@ -181,16 +181,16 @@ if exist "modules\" (
     )
 )
 
-REM ── 6. Port 9100 availability (test port conflict) ────────────────────────────
+REM ── 6. Port 9010 availability (test port conflict) ────────────────────────────
 
-netstat -ano | find ":9100 " >nul 2>&1
+netstat -ano | find ":9010 " >nul 2>&1
 if not errorlevel 1 (
-    echo [WARN] Port 9100 is already in use. Integration tests may fail.
+    echo [WARN] Port 9010 is already in use. Integration tests may fail.
     echo        Check for a leftover HorseCSTestServer.exe:
     echo          tasklist /FI "IMAGENAME eq HorseCSTestServer.exe"
     echo          taskkill /F /IM HorseCSTestServer.exe
 ) else (
-    echo [OK]   Port 9100  available
+    echo [OK]   Port 9010  available
 )
 
 REM ── Summary ───────────────────────────────────────────────────────────────────

@@ -38,7 +38,7 @@
     procedure SetTls12CipherSuites(const ACipherRules: string)
       → SSL_CTX_set_cipher_list (TLS 1.2 and below)
     procedure SetTls13CipherSuites(const ACipherSuites: string)
-      → SSL_CTX_set_ciphersuites (TLS 1.3; not yet surfaced by this provider)
+      → SSL_CTX_set_ciphersuites (TLS 1.3; SSLCipherSuitesTLS13 since 1.0.27)
       Both invalidate the TLS configuration on failure, so a rejected cipher
       string cannot leave a half-configured context serving.
       PR #200 proposed a single fork-only SetCipherList and was CLOSED in
@@ -72,6 +72,11 @@
     SSLVerifyPeer    → FServer.SetVerifyPeer             (mTLS; upstream API)
     SSLKeyPassword   → passed as APassword to SetPrivateKeyFile (upstream API)
     SSLCipherList    → FServer.SetTls12CipherSuites      (TLSOPT-2; DCS ≥1.0.11)
+    SSLCipherSuitesTLS13 → names checked against RFC 8446, then
+                       FServer.SetTls13CipherSuites      (TLSOPT-3; Horse #597)
+    SSLMinVersion    → htvDefault/htvTLS12: nothing to do, DCS already fixes
+                       the minimum at TLS 1.2; htvTLS13 REFUSED at Listen until
+                       a DCS release has a setter (winddriver PR #207)
 
   SetTls12CipherSuites requires Delphi-Cross-Socket ≥1.0.11 (the release that
   merges winddriver bb85ab4). It raises ESslContextInvalid if the string
@@ -79,8 +84,8 @@
   must be rebuilt rather than silently continuing.
 
   The config field keeps the name SSLCipherList: it is this provider's own
-  option name and is unaffected by the DCS method rename. TLS 1.3 suites need
-  SetTls13CipherSuites and a separate config field — not yet surfaced.
+  option name and is unaffected by the DCS method rename. TLS 1.3 suites use
+  the separate field SSLCipherSuitesTLS13 (TLSOPT-3).
 
   Reserved (CrossSocket API not available):
     KeepAliveTimeout — no matching property confirmed in TCrossHttpServer
@@ -216,6 +221,18 @@ type
 implementation
 
 const
+  // [TLSOPT-3] The five TLS 1.3 cipher suites RFC 8446 defines, exactly as
+  // OpenSSL names them. OpenSSL SILENTLY drops a misspelled or wrongly cased
+  // name that sits beside a valid one, and DCS checks only the return code
+  // (its read-back is test-only, CROSS_OPENSSL_SELFTEST), so the provider
+  // checks the names itself before handing them over.
+  TLS13_SUITE_NAMES: array[0..4] of string = (
+    'TLS_AES_128_GCM_SHA256',
+    'TLS_AES_256_GCM_SHA384',
+    'TLS_CHACHA20_POLY1305_SHA256',
+    'TLS_AES_128_CCM_SHA256',
+    'TLS_AES_128_CCM_8_SHA256');
+
   // [FIX-CS-GRACEFUL-1a] Grace period between "no requests in flight" and
   // teardown, covering CrossSocket's async send tail. Same value and same
   // reason as Horse.Provider.Console's post-drain TThread.Sleep(100).
@@ -234,6 +251,49 @@ var
   // flush race (more time fixes it) or something actively discarding it (more
   // time changes nothing). A single value cannot distinguish those.
   GSettleMs: Integer = -1;
+
+// [TLSOPT-3] Every name in a colon-separated TLS 1.3 suite list that is not
+// one of TLS13_SUITE_NAMES, comma-joined; '' when all are known. Exact and
+// case-sensitive, as OpenSSL is. Blanks around a name are ignored, as
+// OpenSSL ignores them.
+function UnknownTls13SuiteNames(const ASuites: string): string;
+var
+  LRest, LName: string;
+  LPos, I: Integer;
+  LKnown: Boolean;
+begin
+  Result := '';
+  LRest := ASuites;
+  while LRest <> '' do
+  begin
+    LPos := Pos(':', LRest);
+    if LPos > 0 then
+    begin
+      LName := Trim(Copy(LRest, 1, LPos - 1));
+      LRest := Copy(LRest, LPos + 1, MaxInt);
+    end
+    else
+    begin
+      LName := Trim(LRest);
+      LRest := '';
+    end;
+    if LName = '' then
+      Continue;
+    LKnown := False;
+    for I := Low(TLS13_SUITE_NAMES) to High(TLS13_SUITE_NAMES) do
+      if TLS13_SUITE_NAMES[I] = LName then
+      begin
+        LKnown := True;
+        Break;
+      end;
+    if not LKnown then
+    begin
+      if Result <> '' then
+        Result := Result + ', ';
+      Result := Result + LName;
+    end;
+  end;
+end;
 
 // Read once; an unset or unparseable value keeps the default.
 function SettleMs: Integer;
@@ -297,6 +357,8 @@ begin
 end;
 
 procedure THorseCrossSocketServer.ApplyConfig;
+var
+  LUnknown: string;
 begin
   // ── [SEC-1] Request size limits ───────────────────────────────────────────
   // MaxHeaderSize: confirmed property on ICrossHttpServer / TCrossHttpServer
@@ -390,6 +452,38 @@ begin
     // config field, since one string cannot carry both grammars.
     if FConfig.SSLCipherList <> '' then
       FServer.SetTls12CipherSuites(FConfig.SSLCipherList);
+
+    // ── [TLSOPT-3] TLS 1.3 cipher suites (HashLoad/horse #597) ────────────
+    // Empty → keep CrossSocket's default TLS 1.3 list. Names are checked here
+    // because OpenSSL drops an unknown one silently when a valid one is next
+    // to it, and DCS has no production read-back. Limitation: a VALID name
+    // missing from this OpenSSL build (e.g. ChaCha20 on some FIPS builds) is
+    // not detected here.
+    if FConfig.SSLCipherSuitesTLS13 <> '' then
+    begin
+      LUnknown := UnknownTls13SuiteNames(FConfig.SSLCipherSuitesTLS13);
+      if LUnknown <> '' then
+        raise Exception.Create(
+          'THorseCrossSocketServer: SSLCipherSuitesTLS13 names unknown TLS 1.3 ' +
+          'suite(s): ' + LUnknown + '. Names are exact and case-sensitive; the ' +
+          'valid ones are TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384, ' +
+          'TLS_CHACHA20_POLY1305_SHA256, TLS_AES_128_CCM_SHA256 and ' +
+          'TLS_AES_128_CCM_8_SHA256.');
+      FServer.SetTls13CipherSuites(FConfig.SSLCipherSuitesTLS13);
+    end;
+
+    // ── [TLSOPT-3] Minimum TLS version ─────────────────────────────────────
+    // DCS fixes the minimum at TLS 1.2 in _InitSslCtx and no released DCS can
+    // raise it (setter proposed upstream as winddriver PR #207). htvDefault and
+    // htvTLS12 therefore need nothing; htvTLS13 is REFUSED rather than serving
+    // TLS 1.2 clients while configured for TLS 1.3 only.
+    if FConfig.SSLMinVersion = htvTLS13 then
+      raise Exception.Create(
+        'THorseCrossSocketServer: SSLMinVersion=htvTLS13 (TLS 1.3 only) is not ' +
+        'supported yet - Delphi-Cross-Socket fixes the minimum at TLS 1.2 and ' +
+        'no release can raise it. Refusing to start rather than accept TLS 1.2 ' +
+        'clients. Use htvTLS12 or htvDefault, or a provider that supports it ' +
+        '(nghttp2, ICS).');
   end;
 end;
 
