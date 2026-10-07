@@ -173,7 +173,7 @@ echo.
 echo ============================================================
 echo  Build SUCCESS
 echo  Artifacts:
-echo    samples\tests\%TARGETPLAT%\%CONFIG%\HorseCSTestServer.exe
-echo    samples\tests\%TARGETPLAT%\%CONFIG%\HorseCSTestClient.exe
+echo    %~dp0..\..\bin\%TARGETPLAT%\%CONFIG%\HorseCSTestServer.exe
+echo    %~dp0..\..\bin\%TARGETPLAT%\%CONFIG%\HorseCSTestClient.exe
 echo ============================================================
 exit /b 0
