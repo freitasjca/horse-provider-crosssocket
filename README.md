@@ -65,13 +65,13 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 | Delphi | 10.4 Sydney+ | Requires `System.Threading`, inline `var` |
 | Lazarus / FPC | **3.3.1 trunk+** | FPC 3.2.2 (stable) **cannot compile this provider**. Delphi-Cross-Socket's `zLib.inc` requires `{$MODESWITCH FUNCTIONREFERENCES}` and `{$MODESWITCH ANONYMOUSFUNCTIONS}`, which were introduced in FPC 3.3.1 (development branch). FPC 3.4.x (when released as stable) will also satisfy this requirement. See [doc/installing-fpc-trunk-lazarus.md](doc/installing-fpc-trunk-lazarus.md) for step-by-step instructions using [fpcupdeluxe](https://github.com/LongDirtyAnimAlf/fpcupdeluxe/releases). |
 | [Horse](https://github.com/HashLoad/horse) | **3.3.12+** | Pulled in by `boss install` of this package — no fork needed. **3.3.12 since v1.0.27**: it carries `SSLCipherSuitesTLS13` and `SSLMinVersion` (HashLoad/horse #597), which this provider reads, so it does not compile against 3.3.11 or earlier. 3.3.0 first carried the provider changes, but **3.3.3 is the floor** because `Res.Send<TStream>` is a silent no-op before it: on 3.3.0–3.3.2 `Send<T>` just stores the argument in `FContent`, which no provider bridge reads as a stream, so every such response returns `200 Content-Length: 0` with no error. Fixed by PATCH-RES-8 in 3.3.3. |
-| [Delphi-Cross-Socket](https://github.com/winddriver/Delphi-Cross-Socket) | fork **1.0.13+** | Transport layer. **Easy path (Boss users):** clone [`freitasjca/Delphi-Cross-Socket v1.0.13`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.13) — Boss-installable, bundles CnPack subset and one fork-only fix (HEAD resend loop). **Advanced path:** clone [`winddriver/Delphi-Cross-Socket`](https://github.com/winddriver/Delphi-Cross-Socket) directly for the latest upstream; requires separate CnPack install (see [Installation](#installation)). |
+| [Delphi-Cross-Socket](https://github.com/winddriver/Delphi-Cross-Socket) | fork **1.0.16+** | Transport layer. **Easy path (Boss users):** clone [`freitasjca/Delphi-Cross-Socket v1.0.16`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.16) — Boss-installable, bundles the CnPack subset; its code is upstream's (the fork-only fixes were merged upstream on 2026-10-08). **Advanced path:** clone [`winddriver/Delphi-Cross-Socket`](https://github.com/winddriver/Delphi-Cross-Socket) directly for the latest upstream; requires separate CnPack install (see [Installation](#installation)). |
 | [CnPack](https://github.com/cnpack/cnvcl) (Crypto units) | latest | Required by Delphi-Cross-Socket — install separately. See [Installation](#installation) |
 | OpenSSL | 1.1.x or 3.x | Only required for HTTPS |
 | [Boss](https://github.com/HashLoad/boss) | any | Recommended — pulls in Horse automatically |
 
 > **Note — fork vs upstream trade-off**  
-> [`freitasjca/Delphi-Cross-Socket`](https://github.com/freitasjca/Delphi-Cross-Socket) (v1.0.15) is Boss-installable and bundles the CnPack subset and two fork-only fixes that upstream does not have yet — the HEAD resend loop and the double-compression guard, both now filed upstream as [#205](https://github.com/winddriver/Delphi-Cross-Socket/pull/205) and [#206](https://github.com/winddriver/Delphi-Cross-Socket/pull/206). It is the easiest starting point. **This provider requires `>=1.0.14`** (the compression guard) from v1.0.25. Fork v1.0.7–v1.0.12 also carried PATCH-CSHTTP-3, an automatic retry that could send a POST twice; v1.0.13 removed it (see [Required Changes to Horse Source](#required-changes-to-horse-source)). mTLS (`AddCACertificateFile` + `SetVerifyPeer`) is now also in upstream `winddriver/Delphi-Cross-Socket` as of 2026-08. If you need the absolute latest CrossSocket changes, use the upstream clone (Path B in [Installation](#installation)). Maintainers: see [`MAINTAINING-CNPACK-SUBSET.md`](MAINTAINING-CNPACK-SUBSET.md) for fork-sync details.
+> [`freitasjca/Delphi-Cross-Socket`](https://github.com/freitasjca/Delphi-Cross-Socket) (v1.0.16) is Boss-installable and bundles the CnPack subset. Its code is now the same as upstream's: the HEAD resend loop fix ([#205](https://github.com/winddriver/Delphi-Cross-Socket/pull/205)), the double-compression guard ([#206](https://github.com/winddriver/Delphi-Cross-Socket/pull/206)), `SetMinTlsVersion` ([#207](https://github.com/winddriver/Delphi-Cross-Socket/pull/207)) and `Content-Length: 0` on an empty client POST/PUT/PATCH ([#208](https://github.com/winddriver/Delphi-Cross-Socket/pull/208)) were all merged upstream on 2026-10-08. It is the easiest starting point. **This provider requires `>=1.0.16`** (`SetMinTlsVersion`) from v1.0.28; it required `>=1.0.14` (the compression guard) from v1.0.25. With the upstream clone, use a commit at or after `578fd4f` (#207). Fork v1.0.7–v1.0.12 also carried PATCH-CSHTTP-3, an automatic retry that could send a POST twice; v1.0.13 removed it (see [Required Changes to Horse Source](#required-changes-to-horse-source)). mTLS (`AddCACertificateFile` + `SetVerifyPeer`) is now also in upstream `winddriver/Delphi-Cross-Socket` as of 2026-08. If you need the absolute latest CrossSocket changes, use the upstream clone (Path B in [Installation](#installation)). Maintainers: see [`MAINTAINING-CNPACK-SUBSET.md`](MAINTAINING-CNPACK-SUBSET.md) for fork-sync details.
 
 ---
 
@@ -441,7 +441,7 @@ maintenance documentation.
 There are two supported install paths.
 
 > **Fork-lag caveat — read before choosing.**  
-> Path A clones [`freitasjca/Delphi-Cross-Socket`](https://github.com/freitasjca/Delphi-Cross-Socket) (v1.0.13), a Boss-ready fork that bundles CnPack and one fork-only fix (HEAD resend loop). mTLS (`AddCACertificateFile` + `SetVerifyPeer`) is now also in `winddriver/Delphi-Cross-Socket` upstream. If you need the absolute latest upstream CrossSocket, use **Path B**.
+> Path A clones [`freitasjca/Delphi-Cross-Socket`](https://github.com/freitasjca/Delphi-Cross-Socket) (v1.0.16), a Boss-ready fork that bundles CnPack; its code matches upstream since the 2026-10-08 merges. mTLS (`AddCACertificateFile` + `SetVerifyPeer`) is now also in `winddriver/Delphi-Cross-Socket` upstream. If you need the absolute latest upstream CrossSocket, use **Path B**.
 
 **Path A is recommended** for most users — it requires one Boss command and one manual `git clone`.
 
@@ -458,12 +458,12 @@ This pulls `HashLoad/horse` (≥ 3.3.12) and `horse-provider-crosssocket` into `
 **Step 2 — Clone the Delphi-Cross-Socket fork manually:**
 
 ```bash
-git clone -b v1.0.13 https://github.com/freitasjca/Delphi-Cross-Socket
+git clone -b v1.0.16 https://github.com/freitasjca/Delphi-Cross-Socket
 ```
 
-This fork bundles the required CnPack subset and one fork-only fix (HEAD resend loop). mTLS is also in `winddriver` upstream as of 2026-08. No separate CnPack install is needed.
+This fork bundles the required CnPack subset; since v1.0.16 its code matches upstream. mTLS is also in `winddriver` upstream as of 2026-08. No separate CnPack install is needed.
 
-> **Fork-lag reminder:** v1.0.13 includes `winddriver/Delphi-Cross-Socket` up to `7139d39` (2026-09-12); later upstream commits may not be in it yet. See the caveat above if this matters for your project.
+> **Fork-lag reminder:** v1.0.16 includes `winddriver/Delphi-Cross-Socket` up to `12846a1` (2026-10-08); later upstream commits may not be in it yet. See the caveat above if this matters for your project.
 
 **Step 3 — Add search paths** (relative to your project folder):
 
@@ -643,11 +643,12 @@ Cfg.SSLMinVersion        := htvTLS12;   // htvDefault | htvTLS12 | htvTLS13
   so the provider checks every name against the five RFC 8446 suites first and
   **raises at Listen, naming the bad one**.
 - **`SSLMinVersion`** — `htvDefault` and `htvTLS12` change nothing: DCS already fixes
-  the floor at TLS 1.2, and TLS 1.3 stays enabled. **`htvTLS13` raises at Listen**:
-  DCS has no public way to raise the minimum yet
-  ([winddriver/Delphi-Cross-Socket#207](https://github.com/winddriver/Delphi-Cross-Socket/pull/207)
-  adds one). The provider refuses rather than start a server that still accepts
-  TLS 1.2 while the config says TLS 1.3 only.
+  the floor at TLS 1.2, and TLS 1.3 stays enabled. **`htvTLS13` serves TLS 1.3 only**
+  (since v1.0.28): it goes to DCS `SetMinTlsVersion`
+  ([winddriver/Delphi-Cross-Socket#207](https://github.com/winddriver/Delphi-Cross-Socket/pull/207),
+  DCS fork >=1.0.16), which reads the OpenSSL context back and raises at Listen if
+  TLS 1.3 was not kept. With the MbedTLS backend it raises "not supported". v1.0.27
+  refused `htvTLS13` at Listen because no DCS release could set it.
 
 Wire-tested by `scripts\run-tls-tests.bat` pass 3 (C0–C7, `openssl s_client` peer);
 see [`tests/TLS-TESTS.md`](tests/TLS-TESTS.md).
@@ -1250,7 +1251,7 @@ MIT — see [LICENSE](LICENSE).
 - [Horse](https://github.com/HashLoad/horse) — the web framework
 - [freitasjca/horse](https://github.com/freitasjca/horse) — synchronization fork (retired: all changes merged into HashLoad/horse 3.3.0)
 - [Delphi-Cross-Socket](https://github.com/winddriver/Delphi-Cross-Socket) — the async socket library
-- [freitasjca/Delphi-Cross-Socket](https://github.com/freitasjca/Delphi-Cross-Socket) — Boss‑installable fork with CnPack subset and fork-only additions (tag `v1.0.13`)
+- [freitasjca/Delphi-Cross-Socket](https://github.com/freitasjca/Delphi-Cross-Socket) — Boss‑installable fork: upstream code plus the CnPack subset (tag `v1.0.16`)
 - [Boss](https://github.com/HashLoad/boss) — the Delphi package manager
 - [horse-jwt](https://github.com/HashLoad/horse-jwt) — JWT middleware
 - [horse-cors](https://github.com/HashLoad/horse-cors) — CORS middleware

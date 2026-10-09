@@ -75,8 +75,8 @@
     SSLCipherSuitesTLS13 → names checked against RFC 8446, then
                        FServer.SetTls13CipherSuites      (TLSOPT-3; Horse #597)
     SSLMinVersion    → htvDefault/htvTLS12: nothing to do, DCS already fixes
-                       the minimum at TLS 1.2; htvTLS13 REFUSED at Listen until
-                       a DCS release has a setter (winddriver PR #207)
+                       the minimum at TLS 1.2; htvTLS13 → FServer.SetMinTlsVersion
+                       (TLSOPT-4; winddriver #207, DCS >=1.0.16 - was refused)
 
   SetTls12CipherSuites requires Delphi-Cross-Socket ≥1.0.11 (the release that
   merges winddriver bb85ab4). It raises ESslContextInvalid if the string
@@ -119,6 +119,7 @@ uses
   Net.CrossHttpServer,
   Net.CrossHttpParams,
   Net.CrossSslSocket.Base,
+  Net.CrossSslSocket.Types, // TCrossTlsMinVersion (TLSOPT-4; DCS >=1.0.16)
   Horse.Provider.Config;
 
 
@@ -472,18 +473,18 @@ begin
       FServer.SetTls13CipherSuites(FConfig.SSLCipherSuitesTLS13);
     end;
 
-    // ── [TLSOPT-3] Minimum TLS version ─────────────────────────────────────
-    // DCS fixes the minimum at TLS 1.2 in _InitSslCtx and no released DCS can
-    // raise it (setter proposed upstream as winddriver PR #207). htvDefault and
-    // htvTLS12 therefore need nothing; htvTLS13 is REFUSED rather than serving
-    // TLS 1.2 clients while configured for TLS 1.3 only.
+    // ── [TLSOPT-4] Minimum TLS version ─────────────────────────────────────
+    // DCS fixes the minimum at TLS 1.2 in _InitSslCtx, so htvDefault and
+    // htvTLS12 need nothing - and must not call the setter: since winddriver
+    // a96f7ce, a backend that does not override SetMinTlsVersion raises for
+    // EVERY value, tmvTls12 included. htvTLS13 goes to SetMinTlsVersion
+    // (winddriver #207, in DCS >=1.0.16), which reads the context back and
+    // raises ESslContextInvalid if OpenSSL did not keep TLS 1.3; MbedTLS
+    // raises "not supported". Either way Listen fails rather than serve TLS
+    // 1.2 to a server configured for 1.3 only. Until 1.0.27 this was a
+    // refusal (TLSOPT-3) because no DCS release had the setter.
     if FConfig.SSLMinVersion = htvTLS13 then
-      raise Exception.Create(
-        'THorseCrossSocketServer: SSLMinVersion=htvTLS13 (TLS 1.3 only) is not ' +
-        'supported yet - Delphi-Cross-Socket fixes the minimum at TLS 1.2 and ' +
-        'no release can raise it. Refusing to start rather than accept TLS 1.2 ' +
-        'clients. Use htvTLS12 or htvDefault, or a provider that supports it ' +
-        '(nghttp2, ICS).');
+      FServer.SetMinTlsVersion(tmvTls13);
   end;
 end;
 

@@ -67,7 +67,7 @@ without it the pass is reported **VOID**, never as a pass.
 | `suites13` | C2 `-tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256` → **refused** | the setting restricts, not just adds |
 | `suites13` | C3 `-tls1_2` → served | the TLS 1.3 setting leaves TLS 1.2 alone |
 | `suites13typo` | C4 server must **not** bind; log names `TLS_AES_256_GCM_SHA348` | a typo next to a valid name, which OpenSSL silently drops, is refused at Listen |
-| `minver13` | C5 server must **not** bind; log names `SSLMinVersion` | TLS-1.3-only is refused, not silently ignored, until DCS can set it |
+| `minver13` | C5a `-tls1_2` → **refused**; C5b `-tls1_3` → `New, TLSv1.3` | TLS-1.3-only is applied by DCS `SetMinTlsVersion` (TLSOPT-4, provider 1.0.28, DCS >=1.0.16). Until 1.0.27 the server refused to start instead |
 | `minver12` | C6 `-tls1_2` → served; C7 `-tls1_3` → served | `htvTLS12` is a floor, not a pin |
 
 The mTLS client certificate is injected by subclassing `TCrossHttpClient` and
