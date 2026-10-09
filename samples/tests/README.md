@@ -1,8 +1,10 @@
 # Integration Test Matrix — `horse-provider-crosssocket` samples/tests
 
-This tree exercises every PATCH-HORSE-2 Provider × Application-type combination using a single shared test client and a per-shape server. The shared client (`HorseCSTestClient.dpr`) is *transport-neutral* — it sends HTTP to `127.0.0.1:9010` and asserts response bodies / headers / status codes. Any of the server projects in this tree can be the target: each registers the same 32 routes via the shared `Horse.CrossSocket.TestRoutes` unit.
+This tree exercises every PATCH-HORSE-2 Provider × Application-type combination using a single shared test client and a per-shape server. The shared client (`HorseCSTestClient.dpr`) is *transport-neutral* — it sends HTTP to `127.0.0.1:9010` and asserts response bodies / headers / status codes. Any of the server projects in this tree can be the target: each registers the same routes via the shared `Horse.CrossSocket.TestRoutes` unit.
 
-Expected result for every server: **88 passed, 1 failed** (89 sub-assertions). The single failure is the documented multi-value `Set-Cookie` limitation — `FCustomHeaders` is a `TDictionary<string,string>` on Delphi / `TStringList` on FPC, so two `Res.AddHeader('Set-Cookie', …)` calls keep only the last. See [`doc/providers.md`](../../doc/providers.md) for context.
+**Current baseline: 139 passed, 0 failed** — `HorseCSTestServer` (Delphi, Console shape) driven by `scripts\run-tests.bat`, 2026-10-07, Horse 3.3.12, provider v1.0.27.
+
+> **Which shapes that baseline covers.** Only the Console shape is run routinely. The full shape matrix below was last run at v1.0.6 (2026-05-26), against the client of that time: 88 passed, 1 failed, the failure being test 10 (two `Set-Cookie` headers, which Horse core then collapsed into one; test 10 passes today). None of the other shapes has been run against the current 139-check client, so their result today is unknown, not "same as Console". Record the date, toolchain and count here when you run one.
 
 ---
 
@@ -55,7 +57,7 @@ samples/tests/
 | 8 | `Lazarus/LCL/HorseCSLCLTestServer` | FPC | LCL | `Horse.Provider.CrossSocket.FPC.LCL` | `TfrmHorseLCLHost` | `-dHORSE_PROVIDER_CROSSSOCKET` + `-dHORSE_APPTYPE_LCL` |
 | 9 | `Lazarus/HTTPApplication/HorseCSHTTPAppTestServer` | FPC | HTTPApp | `Horse.Provider.CrossSocket` | `THorseCrossSocketHTTPApp.Run` | `-dHORSE_PROVIDER_CROSSSOCKET` |
 
-Run any one of them on port 9010, then run the shared `HorseCSTestClient`. Expected: **88 passed, 1 failed**.
+Run any one of them on port 9010, then run the shared `HorseCSTestClient`. Expected: the Console baseline above (**139 passed, 0 failed**) — a shape that scores lower has a shape-specific bug.
 
 > **Why rows 4 and 5 share the same defines.** On Delphi, `HORSE_APPTYPE_DAEMON` means "OS-supervised long-running process" — the OS-specific incarnation (Windows Service via `TService`, or Linux daemon via POSIX signal handlers) is selected by the build target, not by another define. `Horse.Provider.CrossSocket.Daemon.pas` ships both paths in one unit (`{$IFDEF MSWINDOWS}` switch). This matches the cross-platform behaviour of the existing Indy-based `Horse.Provider.Daemon.pas`.
 
@@ -94,12 +96,12 @@ Pasted as a single semicolon-joined string into the Search-path field:
 C:\lang\Repo\horse-provider-crosssocket\src;C:\lang\Repo\horse-provider-crosssocket\modules\horse\src;C:\lang\Repo\Delphi-Cross-Socket\Net;C:\lang\Repo\Delphi-Cross-Socket\Utils;C:\lang\Repo\Delphi-Cross-Socket\OpenSSL;C:\lang\Repo\cnvcl\Source\Common;C:\lang\Repo\cnvcl\Source\Crypto;..\..\Common
 ```
 
-**Search paths — Path B (fork `freitasjca/Delphi-Cross-Socket v1.0.3` — bundled CnPack + mTLS):**
+**Search paths — Path B (fork `freitasjca/Delphi-Cross-Socket` v1.0.16 or later — bundled CnPack subset):**
 
 ```
 C:\lang\Repo\horse-provider-crosssocket\src         ← this repo
 C:\lang\Repo\horse-provider-crosssocket\modules\horse\src   ← HashLoad/horse via Boss
-C:\lang\Repo\Delphi-Cross-Socket\Net                ← freitasjca/Delphi-Cross-Socket v1.0.3
+C:\lang\Repo\Delphi-Cross-Socket\Net                ← freitasjca/Delphi-Cross-Socket v1.0.16+
 C:\lang\Repo\Delphi-Cross-Socket\Utils
 C:\lang\Repo\Delphi-Cross-Socket\OpenSSL
 C:\lang\Repo\Delphi-Cross-Socket\CnPack\Common      ← bundled in fork
@@ -107,7 +109,7 @@ C:\lang\Repo\Delphi-Cross-Socket\CnPack\Crypto      ← bundled in fork
 ..\..\Common
 ```
 
-> **Choose Path B when:** you need mTLS server mode (`SSLVerifyPeer = True`) or prefer one fewer clone. **Choose Path A otherwise** — it tracks the upstream `winddriver/Delphi-Cross-Socket` maintainer directly and you keep upstream improvements as soon as they land. Horse itself is identical between the two paths — Boss pulls `HashLoad/horse` either way.
+> **Both paths have the same code.** Since 2026-10-08 (winddriver #205–#208 merged) the fork's `Net/` matches upstream, and mTLS, encrypted keys and the TLS cipher settings are in both. **Choose Path B** for one fewer clone (the fork bundles the CnPack subset and is what `boss.json` installs). **Choose Path A** to track `winddriver/Delphi-Cross-Socket` directly — use a `master` from 2026-10-08 or later; older clones lack the HEAD-request fix (#205) and `SetMinTlsVersion` (#207). Horse itself is identical between the two paths — Boss pulls `HashLoad/horse` either way.
 
 ### Lazarus / FPC (Console / Daemon / LCL / HTTPApplication)
 
@@ -121,7 +123,7 @@ C:\lang\Repo\Delphi-Cross-Socket\CnPack\Crypto      ← bundled in fork
 
 ## Running the shared client
 
-The client (`HorseCSTestClient.dpr` at the root of this folder) is a single Delphi console binary. It dispatches 32 numbered tests against `http://127.0.0.1:9010` and prints `[HorseCSTest] X passed, Y failed`.
+The client (`HorseCSTestClient.dpr` at the root of this folder) is a single Delphi console binary. It dispatches numbered tests 01–40 (139 checks) against `http://127.0.0.1:9010` and prints `[HorseCSTest] X passed, Y failed`; the exit code is the number of failed checks.
 
 ```
 > HorseCSTestClient.exe
@@ -134,15 +136,11 @@ The client (`HorseCSTestClient.dpr` at the root of this folder) is a single Delp
 
   …
 
-── 32  GET /compat/rawbody  (COMPAT-1: shadow field wins over RawWebResponse.Content)
-  PASS  status 200
-  PASS  body = "shadow-wins"
-  PASS  RawWebResponse stub value NOT present in body
+── 40  GET /diag/failed-tasks  (no unexpected server-side failures this run)
+  …
 
-[HorseCSTest] 88 passed, 1 failed  (total 89)
+[HorseCSTest] 139 passed, 0 failed  (total 139) in … ms wall clock
 ```
-
-The single failure is always Test 10 (multi-value `Set-Cookie`). It's the same failure across every shape — the limitation is in `Horse.Response.FCustomHeaders`, not in the transport or the application type.
 
 ---
 
@@ -226,7 +224,7 @@ The point of testing every cross-product combination is to confirm that the **tr
 - **One** client test runner (`HorseCSTestClient.dpr`)
 - **N** per-shape servers — each ~30–50 lines of pure lifecycle wiring
 
-…any divergence in test results between shapes points immediately at a shape-specific bug (in the cross-product unit), not at a route-surface bug. The `88 passed, 1 failed` baseline is the contract every shape must satisfy.
+…any divergence in test results between shapes points immediately at a shape-specific bug (in the cross-product unit), not at a route-surface bug. The Console baseline (139 passed, 0 failed) is the contract every shape must satisfy.
 
 ---
 
@@ -235,7 +233,7 @@ The point of testing every cross-product combination is to confirm that the **tr
 Two reasonable cadences:
 
 1. **Per-PR sanity (fast):** build + run the Delphi/Console shape only. Catches transport regressions.
-2. **Per-release matrix (slow):** build + run all 8 shapes manually. Catches shape-specific bugs in the cross-product units.
+2. **Per-release matrix (slow):** build + run every shape manually. Catches shape-specific bugs in the cross-product units. Last done at v1.0.6 (2026-05-26) — overdue.
 
 The full matrix is currently a manual exercise — no CI script orchestrates it because each shape needs its IDE-specific build environment. A future PR could add a `scripts/test-matrix.bat` for Windows that builds Delphi shapes 1–4 and runs them in turn.
 
