@@ -124,6 +124,17 @@ begin
     begin
       Res.Send(Req.Body).Status(THTTPStatus.OK);
     end);
+
+  // [TLS-CONNCLOSE-CHECK] run-tls-tests.bat sends raw requests with
+  // "Connection: close" through openssl s_client. An empty-body request
+  // asking to close got NO response on the ICS provider (FIX-ICS-CONNCLOSE-1,
+  // 2026-10-09), and the test client always keeps connections alive, so no
+  // other check here could see that class of bug.
+  THorse.Put('/nobody',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.Send('put-ok').Status(THTTPStatus.OK);
+    end);
 end;
 
 var
