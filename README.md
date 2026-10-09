@@ -394,14 +394,14 @@ No existing method is removed, renamed, or given a different signature. Existing
 **There are no patches for an end-user to apply.**
 
 - **Horse changes** are in `HashLoad/horse` ≥3.3.12. `boss install` pulls the correct version automatically — no fork needed.
-- **Delphi-Cross-Socket bug fixes and mTLS** (`AddCACertificateFile` + `SetVerifyPeer`, password-in-`SetPrivateKeyFile`, CL=0 parser fix) are merged into `winddriver/Delphi-Cross-Socket` upstream as of 2026-08. They are also included in the fork release [`freitasjca/Delphi-Cross-Socket v1.0.13`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.13), which Boss resolves automatically.
-- **Fork-only changes** are in `freitasjca/Delphi-Cross-Socket` v1.0.13. `SetCipherList` and PATCH-CSHTTP-3 were proposed upstream and **both were closed unmerged on 2026-09-06**; the fork has since reduced `SetCipherList` to a deprecated delegation and removed PATCH-CSHTTP-3. The HEAD resend-loop fix is newer and reported upstream:
+- **Delphi-Cross-Socket bug fixes and mTLS** (`AddCACertificateFile` + `SetVerifyPeer`, password-in-`SetPrivateKeyFile`, CL=0 parser fix) are merged into `winddriver/Delphi-Cross-Socket` upstream as of 2026-08. They are also in the fork, which Boss resolves automatically (`boss.json` requires `>=1.0.16`).
+- **There are no fork-only changes any more.** Since fork v1.0.16 (2026-10-08) the fork's code matches upstream; it differs only in packaging (`boss.json`, the vendored CnPack subset). History of the changes that used to differ:
 
   - **`SetCipherList` was superseded.** Upstream implemented the same capability under version-specific names: `SetTls12CipherSuites` (→ `SSL_CTX_set_cipher_list`) and `SetTls13CipherSuites` (→ `SSL_CTX_set_ciphersuites`), which the single fork method cannot express. See [PR #200](https://github.com/winddriver/Delphi-Cross-Socket/pull/200). This provider has called `SetTls12CipherSuites` since v1.0.23, so `SSLCipherList` works against upstream too. **Fork v1.0.15 removed `SetCipherList` entirely** — the deprecated delegation is gone, so that release is breaking for any caller still using it (provider v1.0.22 and earlier). Since provider v1.0.27, `SSLCipherSuitesTLS13` drives `SetTls13CipherSuites` (see *TLS 1.3 cipher suites & minimum version* below).
   - **PATCH-CSHTTP-3 was rejected on substance, and fork v1.0.13 removed it.** See [PR #201](https://github.com/winddriver/Delphi-Cross-Socket/pull/201). It re-sent a `TCrossHttpClient` request once after a connection failure, and every point of the maintainer's review held against the fork's code: it could replay a POST (zero response bytes do not prove the server did not run it); the delayed retry ran on an unmanaged thread outside cancellation and client shutdown; a retry could wait behind the connection limit until an idle connection timed out, or indefinitely with `Idleout = 0`; it also retried parse and compression failures; and it `Writeln`ed full request URLs, query string included. The failures it was written for had other causes, since fixed. From v1.0.13 a connection failure reaches the caller, as with upstream, and retrying is the caller's decision. **Fork v1.0.7–v1.0.12 still contain it**, which is why this provider required `>=1.0.13` from v1.0.24; the floor is `>=1.0.14` from v1.0.25.
-  - **HEAD resend-loop fix (FIX-HEAD-LOOP-1/2).** For `HEAD`, both the HTTP server and the HTTP client resent the header block in a loop until the peer closed the connection: keep-alive clients read the extra copies as the next response, and `TCrossHttpClient` HEAD requests reached the server dozens of times. Fixed in fork v1.0.12; reported upstream as [#203](https://github.com/winddriver/Delphi-Cross-Socket/issues/203) — still open, but now with a fix filed against it as [PR #205](https://github.com/winddriver/Delphi-Cross-Socket/pull/205). With upstream `winddriver/Delphi-Cross-Socket`, this provider (v1.0.23+) no longer crashes on the resulting disconnects, but the resent headers remain until upstream fixes #203.
+  - **HEAD resend-loop fix (FIX-HEAD-LOOP-1/2).** For `HEAD`, both the HTTP server and the HTTP client resent the header block in a loop until the peer closed the connection: keep-alive clients read the extra copies as the next response, and `TCrossHttpClient` HEAD requests reached the server dozens of times. Fixed in fork v1.0.12; reported upstream as [#203](https://github.com/winddriver/Delphi-Cross-Socket/issues/203) and fixed there by [PR #205](https://github.com/winddriver/Delphi-Cross-Socket/pull/205), merged 2026-10-08.
 
-  If you do not need the HEAD fix, upstream `winddriver/Delphi-Cross-Socket` works: `SSLCipherList` already uses upstream's `SetTls12CipherSuites`.
+  Upstream `winddriver/Delphi-Cross-Socket` works too: use a `master` from 2026-10-08 or later, which has the HEAD fix (#205) and `SetMinTlsVersion` (#207, needed for `SSLMinVersion = htvTLS13`).
 
 
 ---
@@ -410,7 +410,7 @@ No existing method is removed, renamed, or given a different signature. Existing
 
 `horse-provider-crosssocket` declares a dependency on
 `freitasjca/Delphi-Cross-Socket` and Boss currently resolves that
-dependency to **v1.0.13** (`boss.json` floor `>=1.0.13`).
+dependency to the newest tag at or above the `boss.json` floor (`>=1.0.16`).
 
 The fork exists for packaging reasons:
 
@@ -490,7 +490,7 @@ Only recommended if you need to track the absolute latest upstream `Delphi-Cross
    git clone https://github.com/cnpack/cnvcl
    ```
 4. Add the required search paths (for Horse, the provider, CrossSocket, and CnPack’s `Common` and `Crypto` units).
-5. If you need mTLS, you must manually apply the two mTLS patches from `patches/Delphi-Cross-Socket/Net/` to your CrossSocket clone.
+5. Use an upstream `master` from 2026-10-08 or later (winddriver #205–#208 merged). mTLS, encrypted keys and the TLS cipher and minimum-version settings need no patching.
 
 ---
 
@@ -596,9 +596,9 @@ Cfg.SSLCACertFile := 'ca-cert.pem';   // CA that signed client certs
 Cfg.SSLVerifyPeer := True;            // reject clients without a valid cert
 ```
 
-> **mTLS uses `AddCACertificateFile` + `SetVerifyPeer`** on `TCrossSslSocketBase` / `TCrossOpenSslSocket`. These are now in **both** the upstream `winddriver/Delphi-Cross-Socket` (≥2026-08) and the fork [`freitasjca/Delphi-Cross-Socket v1.0.13`](https://github.com/freitasjca/Delphi-Cross-Socket/releases/tag/v1.0.13). Both paths work out of the box — no manual patching needed.
+> **mTLS uses `AddCACertificateFile` + `SetVerifyPeer`** on `TCrossSslSocketBase` / `TCrossOpenSslSocket`. These are in **both** the upstream `winddriver/Delphi-Cross-Socket` (≥2026-08) and the fork (`boss.json` requires `>=1.0.16`). Both paths work out of the box — no manual patching needed.
 >
-> If `SSLVerifyPeer = True` but you are on an older DCS clone (pre-2026-08), the build will fail with `E2003 Undeclared identifier: 'AddCACertificateFile'`. Update your DCS clone or switch to the fork v1.0.13.
+> If `SSLVerifyPeer = True` but you are on an older DCS clone (pre-2026-08), the build will fail with `E2003 Undeclared identifier: 'AddCACertificateFile'`. Update your DCS clone or switch to the fork (v1.0.16 or later).
 
 ### TLS integration test
 
@@ -607,7 +607,6 @@ HTTPS and mutual TLS against a self-signed fixture PKI in `tests/certs/`
 (regenerate with `tests/certs/gen-certs.sh`). Run the server (`mtls` argument flips
 on `SSLVerifyPeer`), then the client with the matching argument — exit code is the
 number of failed assertions. Full runbook in [`tests/TLS-TESTS.md`](tests/TLS-TESTS.md).
-The mTLS path needs the two `Net.CrossSslSocket.*` patches above.
 
 ### Encrypted private keys & custom cipher list
 
@@ -623,9 +622,9 @@ Cfg.SSLCipherList  := 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384
   default. TLS 1.3 cipher suites are not affected. An `@SECLEVEL=` inside it sets the
   context's security level, which TLS 1.3 handshakes also obey.
 
-> Like mTLS, both ride the **`Net.CrossSslSocket.*` patches** (tags `TLSOPT-1`/`TLSOPT-2`)
-> or the fork release. They are no-ops you can ignore on a plain unencrypted-key,
-> default-cipher setup.
+> Both use Delphi-Cross-Socket APIs present upstream and in the fork
+> (`SetPrivateKeyFile(file, password)`, `SetTls12CipherSuites`) — no patching. They are
+> no-ops you can ignore on a plain unencrypted-key, default-cipher setup.
 
 ### TLS 1.3 cipher suites & minimum version (v1.0.27, TLSOPT-3)
 
@@ -1060,7 +1059,7 @@ All CI files are in the repository root and work against the `samples/tests/` in
 ```
 boss install                    ↓ pulls Horse from HashLoad/horse
 
-git clone Delphi-Cross-Socket   ↓ either freitasjca v1.0.13 (Path A)
+git clone Delphi-Cross-Socket   ↓ either freitasjca v1.0.16+ (Path A)
                                   or upstream + cnvcl (Path B)
 
 scripts\setup-search-paths.bat  ↓ injects search-path entries into .dproj
@@ -1157,11 +1156,12 @@ All existing Horse middleware and application code is compatible without modific
 | `Req.Body` (TStream) | ✓ zero-copy |
 | `Res.Send` / `Res.Status` / `Res.AddHeader` | ✓ |
 | SSL / TLS | ✓ OpenSSL 3.x |
-| Mutual TLS | ✓ (requires Delphi-Cross-Socket patch) |
+| Mutual TLS | ✓ (`SSLVerifyPeer` + `SSLCACertFile`; no Delphi-Cross-Socket patch needed) |
 | Windows (IOCP) | ✓ |
 | Linux (epoll) | ✓ |
-| macOS (kqueue) | ✓ via CrossSocket |
-| VCL / Apache / CGI / ISAPI providers | not applicable — separate providers |
+| macOS (kqueue) | untested — Delphi-Cross-Socket has a kqueue backend, but this provider has never been built or run on macOS |
+| VCL form / Windows Service / Linux daemon / Lazarus LCL / FPC HTTPApplication | shape units in `src/` (`.VCL`, `.Daemon`, `.FPC.*`); last run as a matrix at v1.0.6 (2026-05-26) — see [`samples/tests/README.md`](samples/tests/README.md) |
+| Apache / CGI / ISAPI | not applicable — the web server owns the socket |
 
 ---
 
@@ -1179,22 +1179,6 @@ src/
 ├── Horse.Provider.CrossSocket.WebResponseAdapter.pas  TCrossSocketWebResponse (backward compat)
 ├── Horse.Provider.CrossSocket.RawRequest.pas    TCrossSocketRawRequest — IHorseRawRequest impl
 └── Horse.Provider.CrossSocket.RawResponse.pas   TCrossSocketRawResponse — IHorseRawResponse impl
-
-patches/
-├── horse/src/
-│   ├── Horse.pas                   — PATCH-HORSE-1: incompatible define guard + CrossSocket switch
-│   ├── Horse.Request.pas           — PATCH-REQ-*: no-arg ctor, Clear, shadow fields, nil-guards, SetBodyString
-│   ├── Horse.Response.pas          — PATCH-RES-*: Clear, shadow fields, CustomHeaders, ContentStream
-│   ├── Horse.Core.RouterTree.pas   — PATCH-TREE-1: nil-guard for RawWebRequest in Execute
-│   ├── Horse.Provider.Abstract.pas — PATCH-ABS-*: ListenWithConfig, Execute, MaxConnections no-op
-│   ├── Horse.Provider.Config.pas   — THorseCrossSocketConfig record (new file)
-│   ├── Horse.Session.pas           — PATCH-SES-1: Clear procedure for pool reuse
-│   ├── Horse.Provider.RawInterfaces.pas  — NEW: IHorseRawRequest + IHorseRawResponse interfaces
-│   ├── Horse.Provider.RawAdapters.pas    — NEW: TInterfacedWebRequest/TInterfacedWebResponse
-│   └── Horse.Provider.{Console,Daemon,VCL,FPC.*}.pas  — updated concrete providers
-└── Delphi-Cross-Socket/Net/
-    ├── Net.CrossSslSocket.OpenSSL.pas  — mTLS support
-    └── Net.CrossSocket.Iocp.pas        — DEBUG-build shutdown fix
 
 samples/
 └── server.dpr                              Minimal working server example
