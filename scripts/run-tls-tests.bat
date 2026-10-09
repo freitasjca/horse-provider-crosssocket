@@ -7,8 +7,8 @@ REM  Runs HorseCSTLSTestServer + HorseCSTLSTestClient in two passes:
 REM    1. one-way TLS  (no argument)   -> T1, T2
 REM    2. mutual TLS   (mtls argument) -> T3, T4
 REM  then a third pass whose peer is openssl s_client, not our client:
-REM    3. TLS 1.3 suites + minimum version (TLSOPT-3, provider 1.0.27) ->
-REM       C0..C7. Needs openssl.exe on PATH; without it the pass is VOID
+REM    3. TLS 1.3 suites + minimum version (TLSOPT-3, provider 1.0.27;
+REM       TLSOPT-4 1.0.28 made C5 a wire check) -> C0..C7, C5 as C5a+C5b. Needs openssl.exe on PATH; without it the pass is VOID
 REM       (loud), never a pass.
 REM
 REM  Usage:  run-tls-tests.bat        (build first with tests\build-tls-tests.bat)
@@ -132,6 +132,16 @@ goto :wait_loop
 :bound
 echo    server pid !SRVPID! listening on port %TLS_PORT%
 
+REM -- [TLS-OSSLVER-1] Record which OpenSSL runtime served this pass. The
+REM    server prints it before binding; a passing run never shows the log,
+REM    so echo it here. "OpenSSL 3.x" is not one version - the exe takes the
+REM    first libcrypto it finds - and a result is only comparable with the
+REM    version beside it. Informational: a missing line does not fail the pass.
+set "OSSL="
+for /f "delims=" %%L in ('findstr /L /C:"OpenSSL:" "!LOG!" 2^>nul') do set "OSSL=%%L"
+if "!OSSL!"=="" set "OSSL=OpenSSL: not reported by the server - binary predates TLS-OSSLVER-1?"
+echo    !OSSL!
+
 "%CLIENT_EXE%" !ARG!
 set "PASS_EXIT=!ERRORLEVEL!"
 
@@ -161,9 +171,12 @@ exit /b 0
 REM ---------------------------------------------------------------------------
 REM Pass 3 - TLS 1.3 suites + minimum version (TLSOPT-3, HashLoad/horse #597).
 REM Judged by s_client's EXIT CODE plus its "Cipher is" / "New, TLSv1.x"
-REM lines, never by OpenSSL error text. C0 is the control for C2. C4 and C5
-REM are startup refusals: the server must NOT bind, and its log must name
-REM the cause, or it is a FAIL. C6/C7: minver12 is a floor DCS already
+REM lines, never by OpenSSL error text. C0 is the control for C2. C4 is a
+REM startup refusal: the server must NOT bind, and its log must name the
+REM cause, or it is a FAIL. C5a/C5b (TLSOPT-4, provider 1.0.28, DCS >=1.0.16):
+REM minver13 used to be refused at Listen; DCS now applies it, so a TLS 1.2
+REM peer must be REFUSED and TLS 1.3 still served. C3 and C6 are the controls
+REM that TLS 1.2 is otherwise served. C6/C7: minver12 is a floor DCS already
 REM enforces, so it must start and still serve TLS 1.3.
 :runsuites
 echo.
@@ -192,7 +205,12 @@ call :cs_expect "-tls1_2" ok "New, TLSv1.2" "C3 suites13: TLS 1.2 is untouched b
 call :cs_stop
 
 call :cs_refusal "suites13typo" suites13typo "TLS_AES_256_GCM_SHA348" "C4 a misspelled suite beside a valid one: Listen refuses, naming it"
-call :cs_refusal "minver13" minver13 "SSLMinVersion" "C5 TLS 1.3 only: refused until DCS can set it, naming SSLMinVersion"
+
+call :cs_server "minver13" minver13
+if "!SRVPID!"=="" goto :cs_end
+call :cs_expect "-tls1_2" refused "" "C5a minver13: a TLS 1.2 client is REFUSED"
+call :cs_expect "-tls1_3" ok "New, TLSv1.3" "C5b minver13: a TLS 1.3 client is served"
+call :cs_stop
 
 call :cs_server "minver12" minver12
 if "!SRVPID!"=="" goto :cs_end
