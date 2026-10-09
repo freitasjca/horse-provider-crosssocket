@@ -145,8 +145,45 @@ echo    !OSSL!
 "%CLIENT_EXE%" !ARG!
 set "PASS_EXIT=!ERRORLEVEL!"
 
+REM -- [TLS-CONNCLOSE-CHECK] One-way pass only: raw requests through openssl
+REM    s_client, every one with "Connection: close". The test client always
+REM    keeps connections alive, so it cannot see a server that drops the
+REM    reply when the client asks to close - which the ICS provider did for
+REM    empty-body requests (FIX-ICS-CONNCLOSE-1, 2026-10-09).
+REM    R0  GET /ping                         - CONTROL: the raw sender works
+REM    R1  PUT /nobody, Content-Length: 0    - empty body + Connection: close
+REM    R2  POST /echo,  Content-Length: 0    - empty body + Connection: close
+if not "!ARG!"=="" goto :raw_done
+set "RAWSSL="
+for /f "delims=" %%I in ('where openssl.exe 2^>nul') do if not defined RAWSSL set "RAWSSL=%%I"
+if not defined RAWSSL goto :raw_noopenssl
+call :raw_check R0 raw-get-ping.txt pong "GET /ping (raw control)"
+set /a PASS_EXIT+=!ERRORLEVEL!
+call :raw_check R1 raw-put-cl0.txt put-ok "PUT, Content-Length: 0, Connection: close"
+set /a PASS_EXIT+=!ERRORLEVEL!
+call :raw_check R2 raw-post-cl0.txt "HTTP/1.1 200" "POST, Content-Length: 0, Connection: close"
+set /a PASS_EXIT+=!ERRORLEVEL!
+goto :raw_done
+:raw_noopenssl
+echo   [VOID] R0-R2 need openssl.exe on PATH - the raw requests were NOT sent.
+set "VOIDED=1"
+:raw_done
+
 taskkill /PID !SRVPID! /F /T >nul 2>&1
 exit /b !PASS_EXIT!
+
+REM raw_check <id> <request file> <text the response must contain> <label>
+REM  -quiet implies -ign_eof: s_client keeps reading after stdin ends, and the
+REM  request's Connection: close makes the server end the session.
+:raw_check
+"!RAWSSL!" s_client -quiet -connect 127.0.0.1:%TLS_PORT% < "%BIN%\%~2" > "%BIN%\raw-%~1.log" 2>&1
+findstr /L /C:"%~3" "%BIN%\raw-%~1.log" >nul 2>&1
+if errorlevel 1 goto :raw_fail
+echo   PASS  %~1 %~4 -^> %~3
+exit /b 0
+:raw_fail
+echo   FAIL  %~1 %~4 - no "%~3" in the response. Response: %BIN%\raw-%~1.log
+exit /b 1
 
 :port_busy
 echo    [VOID] port %TLS_PORT% is already held by pid !OWNER!.
