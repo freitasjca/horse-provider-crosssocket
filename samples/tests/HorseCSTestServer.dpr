@@ -45,6 +45,7 @@
     GET    /body/bytes                  Res.Send(TBytes) body reaches the wire (FIX-BODYBYTES-1)
     GET    /diag/raise                  onRequest hook raises → provider's escaped-exception path (FIX-WP-ERRCOUNT)
     GET    /diag/failed-tasks           JSON "failedTasks":N — errors counted since server start (FIX-WP-ERRCOUNT)
+    GET    /diag/provider               JSON: provider class THorse resolved to + whether a CrossSocket define reached the build (PROVIDER-PROBE-1)
 *)
 
 uses
@@ -726,6 +727,18 @@ begin
     end
   );
 {$ENDIF}
+
+  // PROVIDER-PROBE-1: the provider class THorse resolved to (see the shared
+  // samples/tests/Common unit). Manual check: curl .../diag/provider
+  THorse.Get('/diag/provider',
+    procedure(Req: THorseRequest; Res: THorseResponse)
+    begin
+      Res.ContentType('application/json; charset=utf-8')
+         .Send(Format('{"provider":"%s","crossSocketDefine":%s}',
+           [JE(THorse.ClassParent.ClassName),
+            JB({$IFDEF HORSE_CROSSSOCKET}True{$ELSE}False{$ENDIF})]));
+    end
+  );
 
 end;
 

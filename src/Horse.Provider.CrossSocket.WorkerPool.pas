@@ -221,6 +221,14 @@ begin
     begin
       // [FIX-WP-ERRCOUNT-CTX] Name the failing request when the caller gave one,
       // so a "Task #0" line says WHICH request escaped instead of only that one did.
+      // [FIX-WP-NOCONSOLE] Only a console process has an ErrOutput to write
+      // to. In a VCL, LCL or service host (IsConsole = False) the WriteLn
+      // raised EInOutError 105 from INSIDE the provider's request catch, so
+      // the 500 went out with "I/O error 105" as its body instead of the
+      // generic error, against SEC-31. The failure is still counted; a host
+      // that wants a log installs its own OnTaskError.
+      if not IsConsole then
+        Exit;
       LContext := THorseWorkerPool.ErrorContext;
       if LContext <> '' then
         LContext := '  (request: ' + LContext + ')';
@@ -340,7 +348,14 @@ begin
     // own OnTaskError keep compiling; they can opt in through ErrorContext.
     GErrorContext := AContext;
     try
-      LHandler(E, ATaskIndex);
+      // [FIX-WP-NOCONSOLE] A handler is a log line, and its own failure must
+      // not escape: ReportError runs inside the provider's request catch, and
+      // an exception from here would replace the 500 the client should get.
+      try
+        LHandler(E, ATaskIndex);
+      except
+        // deliberately swallowed - the failure is already counted above
+      end;
     finally
       GErrorContext := '';
     end;

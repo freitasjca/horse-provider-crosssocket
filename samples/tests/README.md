@@ -4,7 +4,21 @@ This tree exercises every PATCH-HORSE-2 Provider × Application-type combination
 
 **Current baseline: 139 passed, 0 failed** — `HorseCSTestServer` (Delphi, Console shape) driven by `scripts\run-tests.bat`, 2026-10-07, Horse 3.3.12, provider v1.0.27.
 
-> **Which shapes that baseline covers.** Only the Console shape is run routinely. The full shape matrix below was last run at v1.0.6 (2026-05-26), against the client of that time: 88 passed, 1 failed, the failure being test 10 (two `Set-Cookie` headers, which Horse core then collapsed into one; test 10 passes today). None of the other shapes has been run against the current 139-check client, so their result today is unknown, not "same as Console". Record the date, toolchain and count here when you run one.
+> **Which shapes that baseline covers.** Only the Console shape is run routinely. Shape runs against the 139-check client (Delphi 12, Win64 Release, provider v1.0.30):
+>
+> | Shape | Date | `/diag/provider` | Result |
+> |---|---|---|---|
+> | `HorseCSTestServer` (Console) | 2026-10-12 | `THorseProviderCrossSocket` | 139 / 0 |
+> | `Delphi/Console` | 2026-10-12 | `THorseProviderCrossSocket` | 139 / 0 |
+> | `Delphi/WinService` (as a Windows service) | 2026-10-12 | `THorseProviderCrossSocketDaemon` | 139 / 0 |
+> | `Delphi/VCL` | 2026-10-12 | `THorseProviderCrossSocketVCL` | 139 / 0 |
+> | `Delphi/LinuxDaemon` (Linux64, Ubuntu 22.04 under WSL2; client on Windows via WSL localhost forwarding) | 2026-10-12 | `THorseProviderCrossSocketDaemon` | 139 / 0, SIGTERM: "Stopped cleanly", port released |
+>
+> The other shapes are unknown, not "same as Console". Record the date, toolchain, `/diag/provider` answer and count here when you run one.
+>
+> **Check `/diag/provider` first.** A shape starts through `THorse.Listen`, so its transport comes from the PROJECT-level defines. Until v1.0.30 the VCL, WinService and LinuxDaemon `.dproj` files set none, and those shapes ran on Horse's Indy default while still answering the routes: the v1.0.29 WinService run was on Indy. `curl http://127.0.0.1:9010/diag/provider` names the provider class `THorse` resolved to.
+>
+> Until v1.0.30 the shared routes unit also lacked the `/stream`, `/body`, `/params/decode` and `/diag` routes (404 against every shape but Console), and the Delphi/Console, Delphi/VCL and Lazarus/Console folders were never committed: `.gitignore`'s `**/console/` and `**/vcl/` matched them.
 
 ---
 
