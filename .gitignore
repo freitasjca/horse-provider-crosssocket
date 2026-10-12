@@ -63,6 +63,14 @@ backup/
 # Code coverage reports
 **/console/
 **/vcl/
+# GITIGNORE-SHAPES-1: the two rules above also matched the Console and VCL
+# SAMPLE folders (git on Windows ignores case), so samples/tests/Delphi/Console,
+# samples/tests/Delphi/VCL and samples/tests/Lazarus/Console were never
+# committed although samples/tests/README.md documents them. Re-include them;
+# IDE files inside (*.res, *.dsk, *.local, ...) stay ignored by the rules below.
+!samples/tests/Delphi/Console/
+!samples/tests/Delphi/VCL/
+!samples/tests/Lazarus/Console/
 dunitx-results.xml
 *.bak
 
