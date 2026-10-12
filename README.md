@@ -44,6 +44,7 @@ This provider replaces the Indy transport layer with [Delphi-Cross-Socket](https
 - [HTTPS / TLS](#https--tls)
 - [Mutual TLS (mTLS)](#mutual-tls-mtls)
 - [Advanced Configuration](#advanced-configuration)
+- [Windows service](#windows-service)
 - [Worker Pool](#worker-pool)
 - [Graceful shutdown](#graceful-shutdown)
 - [Architecture](#architecture)
@@ -699,6 +700,43 @@ THorseWorkerPool.Instance.OnTaskError :=
 
 ---
 
+## Windows service
+
+`THorseCrossSocketService` (`Horse.Provider.CrossSocket.Daemon`) is a `TService`
+base class. It starts `THorse.Listen` on a worker thread in `OnStart` and drains in
+`OnStop`. Descend from it and register your routes in `OnCreate`.
+
+- **No `GetServiceController` of your own (since v1.0.29, SVC-CTRL-2).** The base
+  class implements it. Before, a descendant that didn't declare it died at every
+  `sc start` with SCM error 1067, and nothing was logged. One service per process.
+- **The IDE must see the base as a service module (since v1.0.29, SVC-DFM-1).** The
+  base class has its own `.dfm` (with no `DisplayName`). Your `.dpr` lists the
+  Daemon unit with a module comment, and **both** units carry `: TService`:
+  ```pascal
+  uses
+    Vcl.SvcMgr,
+    Horse.Provider.CrossSocket.Daemon in '<path>\Horse.Provider.CrossSocket.Daemon.pas' {HorseCrossSocketService: TService},
+    MyService in 'MyService.pas' {MyHorseService: TService};
+  ```
+  In the `.dproj`, both entries need `<Form>` and
+  `<DesignClass>TService</DesignClass>`. The IDE's *Add to Project* drops the
+  `: TService`, so check it after adding a unit.
+- **Your service `.dfm` starts with `inherited`** and lists only what differs:
+  ```
+  inherited MyHorseService: TMyHorseService
+    OnCreate = ServiceCreate
+    DisplayName = 'My Horse Service'
+  end
+  ```
+  With `object`, or without the `.dpr` line, the IDE opens your service as a
+  **form** and reports "Property DisplayName does not exist". Answer **Cancel**:
+  *Ignore* saves a form `.dfm`, and the exe then dies at start with `EReadError`.
+- **Keep `HorseCrossSocketService` out of Auto-create** (Project Options > Forms).
+  Only your service is created.
+
+Reference: `samples/tests/Delphi/WinService` (`HorseCSServiceTestServer`). The same
+recipe is validated and released in horse-provider-mormot v1.0.18.
+
 ## Worker Pool
 
 CrossSocket's IO threads must never block. For CPU-bound handlers, offload work to the built-in worker pool:
@@ -1160,7 +1198,7 @@ All existing Horse middleware and application code is compatible without modific
 | Windows (IOCP) | ✓ |
 | Linux (epoll) | ✓ |
 | macOS (kqueue) | untested — Delphi-Cross-Socket has a kqueue backend, but this provider has never been built or run on macOS |
-| VCL form / Windows Service / Linux daemon / Lazarus LCL / FPC HTTPApplication | shape units in `src/` (`.VCL`, `.Daemon`, `.FPC.*`); last run as a matrix at v1.0.6 (2026-05-26) — see [`samples/tests/README.md`](samples/tests/README.md) |
+| VCL form / Windows Service / Linux daemon / Lazarus LCL / FPC HTTPApplication | shape units in `src/` (`.VCL`, `.Daemon`, `.FPC.*`); last run as a matrix at v1.0.6 (2026-05-26), Windows Service re-done in v1.0.29 (see [Windows service](#windows-service)) — see [`samples/tests/README.md`](samples/tests/README.md) |
 | Apache / CGI / ISAPI | not applicable — the web server owns the socket |
 
 ---

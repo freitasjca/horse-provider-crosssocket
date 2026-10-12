@@ -23,7 +23,7 @@ program HorseCSServiceTestServer;
     1. Install:    HorseCSServiceTestServer.exe /install
     2. Start:      sc start HorseCSTestService
     3. Test:       run HorseCSTestClient.exe (from the parent folder).
-                   Expect "88 passed, 1 failed".
+                   Expect "139 passed, 0 failed".
     4. Stop:       sc stop HorseCSTestService    (drains via SEC-30)
     5. Uninstall:  HorseCSServiceTestServer.exe /uninstall
 }
@@ -31,7 +31,7 @@ program HorseCSServiceTestServer;
 uses
   Vcl.SvcMgr,
   Horse.CrossSocket.TestRoutes in '..\..\Common\Horse.CrossSocket.TestRoutes.pas',
-  Horse.Provider.CrossSocket.Daemon in '..\..\..\..\src\Horse.Provider.CrossSocket.Daemon.pas',
+  Horse.Provider.CrossSocket.Daemon in '..\..\..\..\src\Horse.Provider.CrossSocket.Daemon.pas' {HorseCrossSocketService: TService},
   Horse.Provider.CrossSocket in '..\..\..\..\src\Horse.Provider.CrossSocket.pas',
   Horse.Provider.CrossSocket.Pool in '..\..\..\..\src\Horse.Provider.CrossSocket.Pool.pas',
   Horse.Provider.CrossSocket.RawRequest in '..\..\..\..\src\Horse.Provider.CrossSocket.RawRequest.pas',
@@ -47,10 +47,11 @@ uses
 
 {$R *.res}
 
+// The standard Delphi Service Application boilerplate. The service class
+// (declared in MyHorseService.pas) inherits from THorseCrossSocketService,
+// which inherits from Vcl.SvcMgr.TService. No comments inside begin..end: the
+// IDE rewrites that block by position (delphi-service-dfm skill, section 5).
 begin
-  // The standard Delphi Service Application boilerplate. The service class
-  // (declared in MyHorseService.pas) inherits from THorseCrossSocketService
-  // which inherits from Vcl.SvcMgr.TService.
   if not Application.DelayInitialize or Application.Installing then
     Application.Initialize;
   Application.CreateForm(THorseCSTestService, HorseCSTestService);
