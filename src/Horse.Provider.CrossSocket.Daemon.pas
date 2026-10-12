@@ -67,7 +67,18 @@ type
 
     or ignore this class entirely and write the ServiceStart / ServiceStop
     pair by hand. The class spawns a worker thread for THorse.Listen so
-    the SCM ack is not blocked by transport-setup latency. }
+    the SCM ack is not blocked by transport-setup latency.
+
+    SVC-CTRL-2: TService.GetServiceController is abstract and TService.Main
+    calls it on the SCM's thread before OnStart, so a descendant that forgot
+    the override died at every start (EAbstractError, SCM error 1067) with
+    nothing logged. This class implements it, forwarding to the instance
+    created last. One service per process - the same limit THorse has.
+
+    SVC-DFM-1: this class has its own .dfm (Horse.Provider.CrossSocket.Daemon.dfm,
+    no DisplayName). A service app lists this unit in its .dpr with the module
+    comment HorseCrossSocketService: TService (in braces, see README), and its own
+    service .dfm starts with 'inherited'. }
   THorseCrossSocketService = class(TService)
   private
     FPort: Integer;
@@ -78,6 +89,7 @@ type
   public
     constructor Create(AOwner: TComponent); override;
     destructor  Destroy; override;
+    function GetServiceController: TServiceController; override;
     { Set this BEFORE the service starts (in ServiceCreate, typically) so
       the worker thread binds the intended port. }
     property Port: Integer read FPort write FPort default 9000;
@@ -114,9 +126,31 @@ type
 implementation
 
 uses
+{$IFDEF MSWINDOWS}
+  Winapi.Windows,
+{$ENDIF}
   Horse;
 
 {$IFDEF MSWINDOWS}
+
+// SVC-DFM-1: the base class's own .dfm. The IDE designs a class(THorseCrossSocketService)
+// descendant as a SERVICE only when this unit is listed in the .dpr as
+// {HorseCrossSocketService: TService} and the descendant's .dfm starts with 'inherited';
+// otherwise it falls back to the form designer ("Property DisplayName does not exist").
+// At run time this resource is streamed first, then the descendant's.
+{$R *.dfm}
+
+var
+  // SVC-CTRL-2: the service this process hosts. Written on the main thread
+  // (Application.CreateForm, before StartServiceCtrlDispatcher), read on the
+  // SCM's control thread afterwards.
+  GActiveService: THorseCrossSocketService;
+
+procedure HorseCrossSocketServiceController(CtrlCode: DWORD); stdcall;
+begin
+  if GActiveService <> nil then
+    GActiveService.Controller(CtrlCode);
+end;
 
 { THorseCrossSocketService }
 
@@ -126,10 +160,13 @@ begin
   FPort := 9000;
   OnStart := DoServiceStart;
   OnStop  := DoServiceStop;
+  GActiveService := Self;
 end;
 
 destructor THorseCrossSocketService.Destroy;
 begin
+  if GActiveService = Self then
+    GActiveService := nil;
   if Assigned(FListenerThread) then
   begin
     THorse.StopListen;
@@ -137,6 +174,11 @@ begin
     FreeAndNil(FListenerThread);
   end;
   inherited;
+end;
+
+function THorseCrossSocketService.GetServiceController: TServiceController;
+begin
+  Result := HorseCrossSocketServiceController;
 end;
 
 procedure THorseCrossSocketService.DoServiceStart(Sender: TService;

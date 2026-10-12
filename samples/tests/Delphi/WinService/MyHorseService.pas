@@ -24,8 +24,9 @@ type
   private
     { Private declarations }
   public
-    function GetServiceController: TServiceController; override;
     { Public declarations }
+    // No GetServiceController here: THorseCrossSocketService implements it
+    // (SVC-CTRL-2), and this sample is the gate for that.
   end;
 
 var
@@ -33,17 +34,9 @@ var
 
 implementation
 
+{%CLASSGROUP 'System.Classes.TPersistent'}
+
 {$R *.dfm}
-
-procedure ServiceController(CtrlCode: DWord); stdcall;
-begin
-  HorseCSTestService.Controller(CtrlCode);
-end;
-
-function THorseCSTestService.GetServiceController: TServiceController;
-begin
-  Result := ServiceController;
-end;
 
 procedure THorseCSTestService.ServiceCreate(Sender: TObject);
 begin
