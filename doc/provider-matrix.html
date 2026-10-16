@@ -100,6 +100,13 @@
                 provider only if the provider is read back in-band (GET
                 /diag/provider): the CrossSocket WinService "run" of v1.0.29
                 was on Indy.
+                2026-10-16: CrossSocket WinService · first validated run
+                (v1.0.30, Delphi 12 Win64; sc start → STATE 4 RUNNING;
+                GET /diag/provider → THorseProviderCrossSocketDaemon,
+                crossSocketDefine:true; GET /ping → pong; sc stop → clean;
+                uninstall). The v1.0.29 run had no HORSE_PROVIDER_CROSSSOCKET
+                in the .dproj (served on Indy); v1.0.30 (a3cf022) fixed the
+                define. Dagger removed.
     Indy TLS    Horse 3.3.13 (2026-10-10, maintainer PR #613, fixes #610) changed
                 Indy's implicit TLS default from 1.0 to 1.2 and made Method and
                 SSLVersions one policy (no TLS 1.3 added). The Indy TLS cells
@@ -529,7 +536,7 @@
 <div class="wrap">
 
   <header class="mast">
-    <div class="eyebrow">Transport layer · verified against source, 20 Aug 2026 · gRPC layer relocated 23 Aug · graceful shutdown: all 3 external providers fixed and RELEASED 28 Sep (CrossSocket v1.0.25, mORMot v1.0.10, ICS v1.0.8); mORMot and ICS full; CrossSocket settle retired 28 Sep (FIX-CS-DEFER-1/2, 4/60 → 0/180, p=0.0036) · TLS cipher/version rows + Multi-Instance drain (#599) 3 Oct · nghttp2 Windows Service first run 16 Oct (Delphi 12 Win64; sc start → RUNNING; nghttp h2c /ping → 200 pong)</div>
+    <div class="eyebrow">Transport layer · verified against source, 20 Aug 2026 · gRPC layer relocated 23 Aug · graceful shutdown: all 3 external providers fixed and RELEASED 28 Sep (CrossSocket v1.0.25, mORMot v1.0.10, ICS v1.0.8); mORMot and ICS full; CrossSocket settle retired 28 Sep (FIX-CS-DEFER-1/2, 4/60 → 0/180, p=0.0036) · TLS cipher/version rows + Multi-Instance drain (#599) 3 Oct · nghttp2 Windows Service first run 16 Oct (Delphi 12 Win64; sc start → RUNNING; nghttp h2c /ping → 200 pong) · CrossSocket Windows Service first run 16 Oct (v1.0.30, Delphi 12 Win64; sc start → RUNNING; /diag/provider → THorseProviderCrossSocketDaemon; /ping → pong; sc stop)</div>
     <h1>Horse Provider Matrix</h1>
     <p class="standfirst">
       Every transport a Horse application can compile against — the five that ship
@@ -1254,17 +1261,21 @@
         <code>6ad5c03</code>), so it never exercised mORMot before then, and no run is
         recorded after. <strong>mORMot VCL: first recorded run 2026-10-09</strong> — 131/131 on the thread pool with <code>HORSE_PROVIDER_MORMOT</code>, transport confirmed by the provider's <code>Server: unknown</code> banner. That run first had to fix two sample defects: the VCL project lacked the define (it would have served on Indy and passed), and its <code>.dfm</code> said <code>inherited</code> over a code-only base. <strong>mORMot Windows Service: first recorded run the same day</strong> — 131/131 under the SCM, clean <code>sc stop</code> drain, port released; it first needed the sample's lost <code>GetServiceController</code> override restored (without it every start died with SCM 1067). </p>
       <p>
-        <strong>Windows Service, all four external providers: recorded 2026-10-12</strong>
-        (Delphi 12, Win64 Release, installed and run under the SCM). Every provider's
-        service base class now implements <code>GetServiceController</code> and has its own
-        <code>.dfm</code>. Transport proven per run.
+        <strong>Windows Service, all four external providers: recorded 2026-10-12; CrossSocket
+        re-validated 2026-10-16</strong> (Delphi 12, Win64 Release, installed and run under
+        the SCM). Every provider's service base class now implements
+        <code>GetServiceController</code> and has its own <code>.dfm</code>. Transport
+        proven in-band (<code>/diag/provider</code>) per run.
       </p>
       <ul>
         <li><strong>mORMot</strong> v1.0.18/v1.0.19, WinService test shape: 131/131,
           <code>/diag/provider</code> <code>THorseProviderMormot</code>, clean stop.</li>
-        <li><strong>CrossSocket</strong> v1.0.30, WinService test shape: 139/139,
-          <code>THorseProviderCrossSocketDaemon</code>, clean stop. The v1.0.29 run had been
-          on Indy, because the shape's project set no provider define.</li>
+        <li><strong>CrossSocket</strong> v1.0.30, WinService (2026-10-16): sc start →
+          RUNNING, <code>/diag/provider</code> → <code>THorseProviderCrossSocketDaemon</code>
+          (<code>crossSocketDefine:true</code>), <code>/ping</code> → pong, sc stop clean.
+          The 139/139 count claimed on 2026-10-12 came from the v1.0.29 run, which had no
+          <code>HORSE_PROVIDER_CROSSSOCKET</code> define and served on Indy; that count
+          does not carry over.</li>
         <li><strong>nghttp2</strong> 1.12.0 service demo: <code>/ping</code> and
           <code>/status</code> over h2c from WSL, clean drain.</li>
         <li><strong>ICS</strong> v1.0.13/v1.0.14 service sample: RUNNING, <code>/status</code>
