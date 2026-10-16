@@ -1,0 +1,1882 @@
+<!--
+  UPDATED 2026-10-14: the "gRPC here is server-side only" note said there was no
+  packaged gRPC client API. Delphi-nghttp2 1.28.0 adds one (TGrpcChannel +
+  protogen --client); the note now says so. Re-verify with
+    grep -n "TGrpcChannel = class" Delphi-nghttp2/src/Nghttp2.Grpc.Client.pas
+    grep -n "'--client'" Delphi-nghttp2/tools/protogen/Protogen.dpr
+
+  Horse Provider Matrix — capability comparison across all nine transports.
+
+  Published artifact: https://claude.ai/code/artifact/fd5a1f48-5ebf-4437-b262-0f2d6c26a3e0
+  Republishing THIS file path updates that URL in place. Publishing a copy from
+  a different path claims a new URL instead, so edit here rather than elsewhere.
+
+  Every cell was verified against source in the workspace repos, not from
+  memory. Re-verify before changing a mark:
+    streaming   grep -rl "RegisterStreamWriterFactory" <repo>/src/
+                (A HIT IS NOT ENOUGH since 2026-10: mORMot v1.0.15 and ICS v1.0.11
+                 register a factory that REFUSES - it raises 501 - so streaming
+                 stays "—" for them. Read what the factory returns; the gate is
+                 each suite's test 47, which calls the real Res.SendStream.)
+    websocket   grep -rn "Services.Add(THorseWebSocketUpgrader" <repo>/src/
+                (NOT `grep -l WebSocket` — that matches a uses clause and scored
+                 fphttpserver as full support when its upgrader registration is
+                 inside {$IF NOT DEFINED(FPC)}. Check the guard around the hit,
+                 and which app shape reaches it.)
+    mTLS        grep -rl "SSLVerifyPeer\|VerifyPeer"      <repo>/src/
+                (This proves a config FIELD EXISTS. It does not prove TLS works,
+                 and on mORMot it was wrong for three months: the provider built
+                 a correct TNetTlsContext and passed it to WaitStarted, but
+                 constructed the server without hsoEnableTls, so mORMot silently
+                 discarded it and served plain TCP while logging "Listening on
+                 https". Fixed 2026-09-24, FIX-MORMOT-TLS-1, released v1.0.9.
+                 For TLS/mTLS the only sound evidence is a handshake that
+                 completed — run the repo's TLS suite; `tests/run-tls-tests.bat`
+                 on mORMot exits 0/N/2 and refuses to score a server that never
+                 reported an OpenSSL backend.)
+    drain       grep -rn "StopListenGraceful.*override" <repo>/src/   (declared?)
+                grep -rn "ActiveRequests\|WaitFor\|Drain" <repo>/src/ (waits?)
+                (Counting bare "StopListenGraceful" fails BOTH ways. It scored
+                 IOCP and fphttpserver full when neither overrides it — they
+                 inherit a base that only sets a flag and calls StopListen,
+                 ignoring ATimeoutMS entirely. And it MISSES CrossSocket, whose
+                 SEC-30 drain lives inside StopListen (FServer.Stop waits) and
+                 never names StopListenGraceful at all. Check that something
+                 actually waits on in-flight work.)
+                (READING IS NOT ENOUGH, proven 2026-09-24: the stop-path read
+                 upgraded ICS to full, and a 5-run drain probe with a control
+                 disproved it — ICS blocks the caller as long as mORMot and loses
+                 the in-flight response at the instant shutdown begins. Score
+                 this row from a probe: 5000 ms handler, DrainTimeoutMs 3000,
+                 StopListenGraceful(500), shutdown at 800 ms, so elapsed time
+                 names which bound applied — plus C0, the same request
+                 undisturbed, or a severed request and a broken route are
+                 indistinguishable. Probes: patches/horse-provider-mormot/
+                 tests/HorseMormotDrainTest.dpr, horse-provider-ics/tests/
+                 HorseICSDrainTest.dpr, horse-provider-crosssocket/tests/
+                 HorseCSDrainTest.dpr. All three have now RUN: 4200 / 4204 /
+                 4201 ms, none bounded by either timeout, all three losing the
+                 in-flight reply. CrossSocket's earlier void runs were a port
+                 collision — it was bound to 9222, the Chrome/Edge DevTools
+                 default, and a browser answered 404. Bind test fixtures away
+                 from 9222/9229/9000-9100 and assert on a body only your own
+                 handler emits; a 200 from a stranger is still a stranger.)
+    ciphers / min version  (rows added 2026-10-03, TLSCIPHER-1 plan)
+                grep -rn "SetTls12Cipher\|SetTls13CipherSuites\|SslCipherList13\|CipherList :=\|SSLCipherSuitesTLS13\|SslMinVersion\|SSLVersions" <repo>/src/
+                Built-ins: Horse's Indy path exposes CipherList + SSLVersions through
+                Horse.Provider.IOHandleSSL; IOCP/HttpSys/epoll/fphttpserver have no
+                cipher or version setting at all. Score what a Horse USER can set,
+                not what the library underneath could do: Delphi-nghttp2 1.22.0 and
+                DCS both HAVE a TLS 1.3 suite setter; the providers expose it since
+                HashLoad/horse #597 shipped the config fields in Horse 3.3.12 —
+                CrossSocket v1.0.27 and nghttp2 1.11.0 (both released 2026-10-07),
+                so both are "●" for suites. Min version: nghttp2 1.11.0 sets it with
+                read-back (●); CrossSocket v1.0.28 (2026-10-08) sets it too, through
+                DCS SetMinTlsVersion with read-back (winddriver #207 merged, DCS fork
+                1.0.16) - "●"; v1.0.27 refused htvTLS13. Grep:
+                grep -n "SetMinTlsVersion" horse-provider-crosssocket/src/*.pas
+                Wire-verified (openssl s_client, negative case): nghttp2 TLS 1.2
+                rules (stage 10b), nghttp2 TLS 1.3 suites + min version (stage 10c),
+                CrossSocket TLS 1.3 suites (run-tls-tests pass 3 C0-C7), mORMot
+                TLS 1.3 suites (C0-C5), ICS TLS 1.3 suites (pass 4 C0-C5) and ICS
+                min version (pass 3 M0-M4). The other ● cells are source-read only.
+    libraries   grep -rhoE "'[a-z0-9_.-]+\.(dll|so[0-9.]*|dylib)'" <repo>/src/
+    shapes/OS   A shape unit in src/ proves the cell compiles IN PRINCIPLE, nothing
+                more: ICS's Linux cells read "◐" from 2026-06-26 until the first
+                real dcclinux64 build (2026-10-09) hit OverbyteIcsTypes.pas:177,
+                ICS V9.7's deliberate POSIX refusal. Since then a "†" marks every
+                external-provider shape/OS cell with no build or run recorded
+                (audit 2026-10-09: transcripts from 2026-09-11, memory, repo git
+                logs, exe timestamps under /mnt/c/lang/Repo). Remove a † only
+                with a dated run: name the sample, the toolchain and the result.
+                2026-10-12: Windows Service · ICS dagger removed (ICS v1.0.13/14
+                service sample, Delphi 12 Win64 under the SCM).
+                2026-10-16: Windows Service · nghttp2 dagger confirmed by first
+                run (nghttp2 1.12.1, Delphi 12 Win64; sc start → STATE 4
+                RUNNING; nghttp h2c /ping → 200 pong; sc stop → STOPPED). The
+                dagger was removed on 2026-10-12 when the v1.12.0 demo code
+                landed; the dated run above is the proof that backs that cell.
+                The same day (2026-10-12) showed that a shape run proves its
+                provider only if the provider is read back in-band (GET
+                /diag/provider): the CrossSocket WinService "run" of v1.0.29
+                was on Indy.
+    Indy TLS    Horse 3.3.13 (2026-10-10, maintainer PR #613, fixes #610) changed
+                Indy's implicit TLS default from 1.0 to 1.2 and made Method and
+                SSLVersions one policy (no TLS 1.3 added). The Indy TLS cells
+                were NOT re-scored from the release notes; re-verify from
+                horse/src/Horse.Provider.IOHandleSSL.pas once the fork is synced
+                to 3.3.13. ICS OpenSSL wording follows #612 as merged: the DLLs
+                are EMBEDDED as resources and extracted, not statically linked.
+                RE-VERIFIED 2026-10-12 on the synced fork (e63fe02 = 3.3.13):
+                mTLS "—" (no VerifyMode set; RootCertFile alone), TLS 1.3 "—"
+                (stock IdSSLOpenSSL stops at 1.2), min version "◐" (1.2-only
+                possible, 1.3-only not) all hold. TLS 1.2 cipher rules "●" -> "◐":
+                grep "SSLOptions.CipherList" horse/src/Horse.Provider.*.pas hits
+                Console.pas only; Daemon.pas and VCL.pas drop CipherList and
+                DHParamsFile silently. Source level only; no wire test yet.
+  A provider that merely inherits the framework base for StopListenGraceful is
+  scored partial, not full — ATimeoutMS is discarded there. Partial does NOT
+  imply "stops accepting without draining": mORMot waits for in-flight work and
+  then discards the reply, which is worse for the client than not waiting.
+-->
+<title>Horse Provider Matrix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;450;600&display=swap">
+
+<style>
+  :root {
+    --ground:      #F6F8FA;
+    --surface:     #FFFFFF;
+    --surface-alt: #EDF1F5;
+    --ink:         #141C25;
+    --ink-soft:    #46535F;
+    --muted:       #6B7785;
+    --rule:        #D6DEE6;
+    --rule-soft:   #E6ECF1;
+    --accent:      #A85423;
+    --accent-soft: #F2E2D6;
+    --yes:         #2E7D74;
+    --yes-soft:    #DCEBE8;
+    --partial:     #9A6B12;
+    --partial-soft:#F3E8CF;
+    --no:          #8A929B;
+    --no-soft:     #E9EDF1;
+
+    --f-display: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+    --f-body:    "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+    --f-mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 68ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0E151C;
+      --surface:     #151E27;
+      --surface-alt: #1B2731;
+      --ink:         #E6EDF3;
+      --ink-soft:    #B3C0CC;
+      --muted:       #8494A2;
+      --rule:        #2A3846;
+      --rule-soft:   #212D39;
+      --accent:      #E08B4E;
+      --accent-soft: #3A2617;
+      --yes:         #5FBFB0;
+      --yes-soft:    #16302E;
+      --partial:     #D9AC55;
+      --partial-soft:#332813;
+      --no:          #6C7885;
+      --no-soft:     #1C262F;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0E151C;
+    --surface:     #151E27;
+    --surface-alt: #1B2731;
+    --ink:         #E6EDF3;
+    --ink-soft:    #B3C0CC;
+    --muted:       #8494A2;
+    --rule:        #2A3846;
+    --rule-soft:   #212D39;
+    --accent:      #E08B4E;
+    --accent-soft: #3A2617;
+    --yes:         #5FBFB0;
+    --yes-soft:    #16302E;
+    --partial:     #D9AC55;
+    --partial-soft:#332813;
+    --no:          #6C7885;
+    --no-soft:     #1C262F;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 4rem 1.5rem 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.5rem;
+  }
+
+  /* ── Masthead ─────────────────────────────────────── */
+  .mast { display: flex; flex-direction: column; gap: 1rem; }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(2.2rem, 5.5vw, 3.4rem);
+    line-height: 1.02;
+    letter-spacing: -.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: 1.08rem;
+    color: var(--ink-soft);
+    max-width: var(--measure);
+    margin: 0;
+  }
+
+  /* ── Sections ─────────────────────────────────────── */
+  section { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: 1.55rem;
+    letter-spacing: -.01em;
+    margin: 0;
+    padding-bottom: .5rem;
+    border-bottom: 2px solid var(--ink);
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.12rem;
+    margin: 0 0 .35rem;
+    letter-spacing: -.005em;
+  }
+
+  p { margin: 0; max-width: var(--measure); }
+  p + p { margin-top: .8rem; }
+
+  code, .mono {
+    font-family: var(--f-mono);
+    font-size: .86em;
+    font-variant-ligatures: none;
+  }
+
+  code {
+    background: var(--surface-alt);
+    border: 1px solid var(--rule-soft);
+    border-radius: 3px;
+    padding: .08em .34em;
+    color: var(--ink);
+  }
+
+  /* ── Matrix ───────────────────────────────────────── */
+  .scroller {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: .87rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--surface-alt);
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: .8rem;
+    text-align: center;
+    padding: .7rem .5rem;
+    border-bottom: 2px solid var(--rule);
+    white-space: nowrap;
+    color: var(--ink);
+  }
+
+  thead th.cap {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    height: 9.5rem;
+    vertical-align: bottom;
+    padding: .6rem .35rem .8rem;
+    font-size: .78rem;
+    letter-spacing: .01em;
+  }
+
+  th.rowhead {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--surface);
+    text-align: left;
+    font-family: var(--f-body);
+    font-weight: 600;
+    font-size: .87rem;
+    padding: .6rem .85rem;
+    border-right: 2px solid var(--rule);
+    white-space: nowrap;
+    color: var(--ink);
+  }
+
+  thead th.rowhead {
+    z-index: 3;
+    background: var(--surface-alt);
+    font-family: var(--f-display);
+  }
+
+  .rowhead .def {
+    display: block;
+    font-family: var(--f-mono);
+    font-size: .7rem;
+    font-weight: 400;
+    color: var(--muted);
+    margin-top: .12rem;
+    letter-spacing: -.01em;
+  }
+
+  tbody tr { border-bottom: 1px solid var(--rule-soft); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover th.rowhead,
+  tbody tr:hover td { background: var(--surface-alt); }
+
+  td {
+    text-align: center;
+    padding: .45rem .3rem;
+    border-right: 1px solid var(--rule-soft);
+  }
+  td:last-child { border-right: none; }
+
+  .band td { background: var(--accent-soft); }
+  .band th.rowhead {
+    background: var(--accent-soft);
+    color: var(--ink);
+  }
+  .band:hover td, .band:hover th.rowhead { background: var(--accent-soft); }
+
+  .mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    border-radius: 4px;
+    font-family: var(--f-mono);
+    font-size: .82rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .m-yes  { background: var(--yes-soft);     color: var(--yes); }
+  .m-par  { background: var(--partial-soft); color: var(--partial); }
+  .m-no   { background: var(--no-soft);      color: var(--no); font-weight: 400; }
+  /* † = the cell is what the source says; nothing in this project has built or
+     run it. Added 2026-10-09 after the ICS Linux cells turned out to be wrong. */
+  .nr { color: var(--partial); font-weight: 700; font-size: .8rem; margin-left: .15rem; vertical-align: super; }
+
+  /* Distinct from m-no on purpose. "Not available" is a gap; "not applicable"
+     is a category error — the question does not apply to a provider at all. */
+  .m-na {
+    background: transparent;
+    border: 1px dashed var(--rule);
+    color: var(--muted);
+    font-size: .62rem;
+    font-weight: 500;
+    letter-spacing: .04em;
+    width: auto;
+    padding: 0 .4rem;
+  }
+
+  .band-na td, .band-na th.rowhead { background: var(--surface-alt); }
+  .band-na:hover td, .band-na:hover th.rowhead { background: var(--surface-alt); }
+
+  .group-label {
+    font-family: var(--f-mono);
+    font-size: .68rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: .9rem .85rem .3rem;
+    text-align: left;
+    background: var(--surface);
+    position: sticky;
+    left: 0;
+  }
+
+  /* ── Dependency table ─────────────────────────────── */
+  table.deps { font-size: .84rem; }
+
+  table.deps th.rowhead { width: 12rem; }
+
+  table.deps thead th {
+    text-align: left;
+    writing-mode: horizontal-tb;
+    transform: none;
+    height: auto;
+    padding: .7rem .85rem;
+  }
+
+  table.deps td {
+    text-align: left;
+    padding: .6rem .85rem;
+    vertical-align: top;
+    font-family: var(--f-mono);
+    font-size: .78rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    letter-spacing: -.01em;
+  }
+
+  table.deps td.none {
+    font-family: var(--f-body);
+    font-size: .82rem;
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  .req {
+    display: inline-block;
+    font-family: var(--f-mono);
+    font-size: .64rem;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: .1rem .38rem;
+    border-radius: 3px;
+    margin-bottom: .3rem;
+  }
+  .req-must { background: var(--accent-soft); color: var(--accent); }
+  .req-tls  { background: var(--partial-soft); color: var(--partial); }
+  .req-os   { background: var(--yes-soft); color: var(--yes); }
+
+  /* ── Legend ───────────────────────────────────────── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    font-size: .85rem;
+    color: var(--ink-soft);
+    align-items: center;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: .5rem; }
+
+  /* ── Verdict blocks ───────────────────────────────── */
+  .verdicts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 1.4rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: .9rem;
+  }
+  .card.only  { border-top: 3px solid var(--accent); }
+  .card.cost  { border-top: 3px solid var(--muted); }
+
+  .card h3 { margin: 0; }
+
+  .card ul { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: .85rem; }
+  .card li { display: flex; flex-direction: column; gap: .18rem; }
+  .card li strong { font-weight: 600; font-size: .95rem; }
+  .card li span { font-size: .88rem; color: var(--ink-soft); line-height: 1.5; }
+
+  /* ── Notes ────────────────────────────────────────── */
+  .notes {
+    background: var(--surface-alt);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 5px 5px 0;
+    padding: 1.15rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: .7rem;
+  }
+  .notes h3 { margin: 0; }
+  .notes p { font-size: .9rem; color: var(--ink-soft); max-width: none; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, th:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 2.5rem 1rem 4rem; gap: 2.5rem; }
+    thead th.cap { height: 8.5rem; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div class="eyebrow">Transport layer · verified against source, 20 Aug 2026 · gRPC layer relocated 23 Aug · graceful shutdown: all 3 external providers fixed and RELEASED 28 Sep (CrossSocket v1.0.25, mORMot v1.0.10, ICS v1.0.8); mORMot and ICS full; CrossSocket settle retired 28 Sep (FIX-CS-DEFER-1/2, 4/60 → 0/180, p=0.0036) · TLS cipher/version rows + Multi-Instance drain (#599) 3 Oct · nghttp2 Windows Service first run 16 Oct (Delphi 12 Win64; sc start → RUNNING; nghttp h2c /ping → 200 pong)</div>
+    <h1>Horse Provider Matrix</h1>
+    <p class="standfirst">
+      Every transport a Horse application can compile against — the five that ship
+      inside the framework and the four that install separately — scored on the
+      capabilities that actually differ between them — then on what each needs at
+      run time, and how each can be packaged and fronted. Route handler code is
+      identical across all nine; only the socket owner changes.
+    </p>
+  </header>
+
+  <section>
+    <h2>Capability matrix</h2>
+    <p>
+      Rows are grouped by what the choice buys you. The two <span class="mono">highlighted</span>
+      rows are the ones where exactly one provider answers yes.
+    </p>
+
+    <div class="scroller" role="region" aria-label="Provider capability matrix, scrolls horizontally" tabindex="0">
+      <table>
+        <thead>
+          <tr>
+            <th class="rowhead">Capability</th>
+            <th class="cap">Indy <span class="mono">(default)</span></th>
+            <th class="cap">fphttpserver <span class="mono">(FPC default)</span></th>
+            <th class="cap">HTTP.sys</th>
+            <th class="cap">epoll</th>
+            <th class="cap">IOCP</th>
+            <th class="cap">CrossSocket</th>
+            <th class="cap">mORMot</th>
+            <th class="cap">ICS</th>
+            <th class="cap">nghttp2</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <tr><td class="group-label" colspan="10">Protocol</td></tr>
+
+          <tr>
+            <th class="rowhead">HTTP/1.1<span class="def">baseline</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">HTTP/2<span class="def">multiplexing · HPACK</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">WebSocket<span class="def">RFC 6455 · 8441 on h2</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-par">◐</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Streaming / SSE<span class="def">Res.SendStream</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr class="band">
+            <th class="rowhead">gRPC transport<span class="def">server side · unary + all 3 streaming</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr><td class="group-label" colspan="10">Security</td></tr>
+
+          <tr>
+            <th class="rowhead">TLS</th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">mTLS<span class="def">client-cert verify</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">TLS 1.3 + SNI<span class="def">OpenSSL 3.x / 4.x</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">TLS 1.2 cipher rules<span class="def">SSL_CTX_set_cipher_list</span></th>
+            <td><span class="mark m-par" title="Console shape only: Horse.Provider.Daemon and .VCL never pass IOHandleSSL.CipherList (or DHParamsFile) to Indy, so the setting is silently ignored there (source, Horse 3.3.13)">◐</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">TLS 1.3 cipher suites<span class="def">SSL_CTX_set_ciphersuites</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Minimum TLS version<span class="def">e.g. TLS 1.3 only</span></th>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr><td class="group-label" colspan="10">Concurrency &amp; lifecycle</td></tr>
+
+          <tr>
+            <th class="rowhead">Async event loop<span class="def">epoll / IOCP / kqueue</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Handler worker pool<span class="def">off-loop dispatch</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Graceful shutdown<span class="def">StopListenGraceful</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr class="band">
+            <th class="rowhead">Two-stage GOAWAY drain<span class="def">RFC 9113 §6.8</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr><td class="group-label" colspan="10">Platform &amp; cost</td></tr>
+
+          <tr>
+            <th class="rowhead">Delphi</th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Lazarus / FPC</th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-par">◐</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Cross-platform<span class="def">Win · Linux · macOS</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span><sup class="nr" title="source-read only: no build or run of this cell is recorded in this project">†</sup></td>
+            <td><span class="mark m-yes">●</span><sup class="nr" title="source-read only: no build or run of this cell is recorded in this project">†</sup></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span><sup class="nr" title="source-read only: no build or run of this cell is recorded in this project">†</sup></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Zero external dependency</th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-no">—</span></td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <div class="legend">
+      <span><span class="mark m-yes">●</span> supported</span>
+      <span><span class="mark m-par">◐</span> partial — see notes</span>
+      <span><span class="mark m-no">—</span> not available</span>
+      <span><span class="nr">†</span> macOS leg read in source only — never built or run here</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Runtime dependencies</h2>
+    <p>
+      What has to be present on the machine at run time, beyond your binary.
+      Library names are the ones the loader actually looks for — all are resolved
+      dynamically, so a missing one fails at startup or first TLS handshake, not
+      at link time.
+    </p>
+    <p>
+      The distinction that matters when packaging: <span class="req req-os">OS</span>
+      ships with the operating system, <span class="req req-tls">TLS only</span> is
+      needed just for HTTPS, and <span class="req req-must">required</span> means the
+      provider will not start without it.
+    </p>
+
+    <div class="scroller" role="region" aria-label="Runtime dependency table, scrolls horizontally" tabindex="0">
+      <table class="deps">
+        <thead>
+          <tr>
+            <th class="rowhead">Provider</th>
+            <th>Windows</th>
+            <th>Linux</th>
+            <th>macOS</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <tr>
+            <th class="rowhead">Indy<span class="def">Delphi default</span></th>
+            <td><span class="req req-tls">TLS only</span><br>libeay32.dll<br>ssleay32.dll<br><em>(OpenSSL 1.0.2 era)</em></td>
+            <td><span class="req req-tls">TLS only</span><br>libssl.so<br>libcrypto.so</td>
+            <td><span class="req req-tls">TLS only</span><br>libssl.dylib<br>libcrypto.dylib</td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">fphttpserver<span class="def">FPC default</span></th>
+            <td class="none">FPC RTL only</td>
+            <td><span class="req req-tls">TLS only</span><br>libssl.so<br>libcrypto.so</td>
+            <td><span class="req req-tls">TLS only</span><br>libssl.dylib<br>libcrypto.dylib</td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">HTTP.sys</th>
+            <td><span class="req req-os">OS</span><br>httpapi.dll<br>kernel32.dll<br><em>TLS via cert store</em></td>
+            <td class="none">Windows only</td>
+            <td class="none">Windows only</td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">epoll</th>
+            <td class="none">Linux only</td>
+            <td><span class="req req-os">OS</span><br>libc.so.6<br><em>no TLS support</em></td>
+            <td class="none">Linux only</td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">IOCP</th>
+            <td><span class="req req-os">OS</span><br>kernel32.dll<br>ws2_32.dll</td>
+            <td class="none">Windows only</td>
+            <td class="none">Windows only</td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">CrossSocket</th>
+            <td><span class="req req-tls">TLS only</span><br>libssl-3-x64.dll<br>libcrypto-3-x64.dll<br><em>or the -1_1 pair</em></td>
+            <td><span class="req req-tls">TLS only</span><br>libssl.so.3<br>libcrypto.so.3<br><em>or .so.1.1</em></td>
+            <td><span class="req req-tls">TLS only</span><br>libssl.3.dylib<br>libcrypto.3.dylib</td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">mORMot<span class="def">+ build-time static blobs</span></th>
+            <td><span class="req req-tls">TLS only</span><br>libssl-3-x64.dll<br>libcrypto-3-x64.dll<br><em>or link statically</em></td>
+            <td><span class="req req-tls">TLS only</span><br>libssl.so.3<br>libcrypto.so.3<br><em>or link statically</em></td>
+            <td><span class="req req-tls">TLS only</span><br>libssl.3.dylib<br>libcrypto.3.dylib</td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">ICS</th>
+            <td><span class="req req-tls">TLS only</span><br>libssl-4-x64.dll<br>libcrypto-4-x64.dll<br><em>embedded in the exe as resources by ICS V9.7 defaults (not static linking), extracted to C:\ProgramData\ICS-OpenSSL\ at first use</em></td>
+            <td class="none">not with ICS V9.x (needs V10)</td>
+            <td class="none">not with ICS V9.x (needs V10)</td>
+          </tr>
+
+          <tr class="band">
+            <th class="rowhead">nghttp2</th>
+            <td>
+              <span class="req req-must">required</span><br>nghttp2.dll<br>
+              <span class="req req-tls">TLS only</span><br>libssl-3-x64.dll<br>libcrypto-3-x64.dll
+            </td>
+            <td>
+              <span class="req req-must">required</span><br>libnghttp2.so.14<br>
+              <span class="req req-tls">TLS only</span><br>libssl.so.3<br>libcrypto.so.3
+            </td>
+            <td>
+              <span class="req req-must">required</span><br>libnghttp2.dylib<br>
+              <span class="req req-tls">TLS only</span><br>libssl.3.dylib<br>libcrypto.3.dylib
+            </td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <div class="notes">
+      <h3>Packaging consequences</h3>
+      <p>
+        <strong>nghttp2 is the only provider that will not start without a
+        third-party library.</strong> Everywhere else the native dependency is either
+        supplied by the OS or needed only if you turn on HTTPS — so a plain HTTP build
+        of any other provider ships as a single binary. An nghttp2 build always carries
+        libnghttp2 ≥ 1.59 with it.
+      </p>
+      <p>
+        <strong>Only ICS bundles its OpenSSL.</strong> With ICS V9.7's default
+        defines (<code>OpenSSL_Resource_Files</code> + <code>OpenSSL_40</code> in
+        <code>OverbyteIcsDefs.inc</code>) the OpenSSL 4 DLLs are embedded in the exe as
+        resources and written to <code>C:\ProgramData\ICS-OpenSSL\4000\</code> at first
+        load, so there is no version hunt and no mismatch against a system-wide install.
+        Measured 2026-10-08: the ICS TLS server reports <q>OpenSSL 4.0.0 from
+        C:\ProgramData\ICS-OpenSSL\4000\…</q>, so the ICS TLS results in this matrix
+        were obtained on OpenSSL <strong>4</strong>, not 3.x. Every other TLS-capable
+        provider expects you to supply OpenSSL and to keep its version in step.
+      </p>
+      <p>
+        <strong>Windows without OpenSSL is possible on two providers.</strong>
+        HTTP.sys uses the Windows certificate store and SChannel in kernel space;
+        IOCP has no TLS to configure. That removes OpenSSL from the deployment
+        entirely — worth real money in environments where shipping crypto libraries
+        triggers review.
+      </p>
+      <p>
+        <strong>mORMot is not one of them, despite the library supporting SChannel.</strong>
+        The Horse provider exposes <code>SSLCertFile</code> + <code>SSLPrivKeyFile</code>
+        as a PEM pair, and mORMot's SChannel <em>server</em> path wants something else
+        entirely — <code>mormot.net.sock.pas:1009</code> says the certificate
+        <q>on SChannel server, expects a .pfx / PKCS#12 binary content</q>. So the
+        provider's configuration surface only reaches the OpenSSL backend, and on
+        Windows it additionally needs the <code>FORCE_OPENSSL</code> conditional:
+        mORMot picks its TLS layer by whoever assigns <code>NewNetTls</code> first, and
+        <code>mormot.lib.openssl11</code> claims it unconditionally only under that
+        define. Adding the unit to <code>uses</code> is not sufficient. This row
+        previously read <q>mORMot uses SChannel</q>, which was inferred from the
+        library rather than from this provider's config surface.
+      </p>
+      <p>
+        <strong>Version resolution is automatic where it exists.</strong> CrossSocket
+        and nghttp2 probe for OpenSSL 3.x first and fall back to 1.1.x, trying each
+        platform's naming convention in turn. ICS does not probe: the OpenSSL
+        generation is fixed when ICS itself is compiled (see the ICS note above). Indy is the outlier: its
+        classic <code>IdSSLOpenSSL</code> path is pinned to the OpenSSL 1.0.2-era
+        <code>libeay32</code>/<code>ssleay32</code> pair, which modern systems no longer
+        ship.
+      </p>
+      <p>
+        <strong>epoll has no TLS at all</strong> — not a partial, an absence. Terminate
+        TLS at a proxy in front of it.
+      </p>
+      <p>
+        <strong>mORMot alone has a build-time dependency.</strong> The
+        <code>mormot2static</code> blob bundle must be extracted into
+        <code>mORMot2/static/</code> before anything compiles — precompiled
+        <code>.obj</code> for Delphi, <code>.o</code> for FPC and Delphi Linux64.
+        That is a build input, not a runtime file, and it is also what lets mORMot
+        link OpenSSL statically for a genuinely self-contained binary — the only
+        provider here that can.
+      </p>
+      <p>
+        <strong>Windows Services need the DLLs beside the <code>.exe</code>.</strong>
+        The Service Control Manager does not inherit the interactive user's
+        <code>PATH</code>, so a placement that works on a double-click fails when
+        the service starts. Applies to every OpenSSL-using provider.
+      </p>
+      <p>
+        <strong>Do not mix OpenSSL families.</strong> 1.1.x and 3.x cannot coexist in
+        one process, and code that dynamic-loads <code>libssl-1_1</code> will not run
+        on a host carrying only <code>libcrypto-3</code>. Pick one family per
+        deployment.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Deployment</h2>
+    <p>
+      Two independent questions, and conflating them is the usual mistake.
+      <strong>Binary shape</strong> is how the process is packaged and started.
+      <strong>Fronting</strong> is what sits between the internet and that process —
+      and there, in-process hosting and reverse proxying are not variations of one
+      idea but opposites.
+    </p>
+    <p>
+      Read the <span class="mono">n/a</span> band carefully: it does <em>not</em> say
+      Horse cannot run under IIS, Apache, CGI or FastCGI. It can, and those are
+      well-supported targets. It says those modes replace the provider rather than
+      run on top of one, so no provider column can answer for them.
+    </p>
+
+    <div class="scroller" role="region" aria-label="Deployment matrix, scrolls horizontally" tabindex="0">
+      <table>
+        <thead>
+          <tr>
+            <th class="rowhead">Deployment</th>
+            <th class="cap">Indy <span class="mono">(default)</span></th>
+            <th class="cap">fphttpserver <span class="mono">(FPC default)</span></th>
+            <th class="cap">HTTP.sys</th>
+            <th class="cap">epoll</th>
+            <th class="cap">IOCP</th>
+            <th class="cap">CrossSocket</th>
+            <th class="cap">mORMot</th>
+            <th class="cap">ICS</th>
+            <th class="cap">nghttp2</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <tr><td class="group-label" colspan="10">Binary shape · HORSE_APPTYPE_*</td></tr>
+
+          <tr>
+            <th class="rowhead">Console<span class="def">default shape</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">VCL form<span class="def">HORSE_APPTYPE_VCL</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span><sup class="nr" title="source-read only: no build or run of this cell is recorded in this project">†</sup></td>
+            <td><span class="mark m-yes">●</span><sup class="nr" title="source-read only: no build or run of this cell is recorded in this project">†</sup></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Windows Service<span class="def">TService · SvcMgr</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Linux daemon<span class="def">SIGTERM/SIGINT handler</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span><sup class="nr" title="source-read only: no build or run of this cell is recorded in this project">†</sup></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Lazarus LCL form<span class="def">HORSE_APPTYPE_LCL</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span><sup class="nr" title="source-read only: no build or run of this cell is recorded in this project">†</sup></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span><sup class="nr" title="source-read only: no build or run of this cell is recorded in this project">†</sup></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">FPC HTTPApplication<span class="def">FPC default shape</span></th>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-par">◐</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span><sup class="nr" title="source-read only: no build or run of this cell is recorded in this project">†</sup></td>
+            <td><span class="mark m-no">—</span></td>
+            <td><span class="mark m-yes">●</span></td>
+          </tr>
+
+          <tr><td class="group-label" colspan="10">Instead of a provider — the web server owns the socket · HORSE_HOST_*</td></tr>
+
+          <tr class="band-na">
+            <th class="rowhead">IIS (ISAPI)<span class="def">HORSE_HOST_ISAPI</span></th>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+          </tr>
+
+          <tr class="band-na">
+            <th class="rowhead">Apache module<span class="def">HORSE_HOST_APACHE</span></th>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+          </tr>
+
+          <tr class="band-na">
+            <th class="rowhead">CGI / FastCGI<span class="def">HORSE_HOST_CGI · _FCGI</span></th>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+            <td><span class="mark m-na">n/a</span></td>
+          </tr>
+
+          <tr><td class="group-label" colspan="10">Behind a reverse proxy · provider still owns its socket</td></tr>
+
+          <tr>
+            <th class="rowhead">nginx<span class="def">proxy_pass / grpc_pass</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Apache httpd<span class="def">mod_proxy · mod_proxy_http2</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">IIS (ARR)<span class="def">Application Request Routing</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-no">—</span></td>
+          </tr>
+
+          <tr>
+            <th class="rowhead">Direct to internet<span class="def">no proxy</span></th>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-yes">●</span></td>
+            <td><span class="mark m-par">◐</span></td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <div class="legend">
+      <span><span class="mark m-yes">●</span> supported</span>
+      <span><span class="mark m-par">◐</span> partial — see notes</span>
+      <span><span class="mark m-no">—</span> not available</span>
+      <span><span class="mark m-na">n/a</span> question does not apply — no provider is involved</span>
+      <span><span class="nr">†</span> read in source only — no build or run recorded; on Cross-platform, the macOS leg</span>
+    </div>
+    <div class="notes">
+      <h3>What the † cells rest on</h3>
+      <p>
+        Every cell in this page was read in source. The <span class="nr">†</span> marks the
+        ones where that is <em>all</em> there is: the shape unit exists and looks right, but
+        no build or run of it is recorded anywhere in this project. The ICS Linux cells
+        were in exactly this state, and the first real build showed ICS V9.7 refuses POSIX
+        outright, so treat a † as a claim to test before you depend on it.
+      </p>
+      <p>
+        What <em>is</em> recorded (2026-10-09 audit): nghttp2 Linux daemon (Delphi
+        Linux64 via PAServer, SIGTERM clean, 2026-08-06) and its FPC Daemon and
+        HTTPApplication shapes (<code>run-fpc-shape-tests.sh</code>: compile, GET /ping,
+        SIGTERM exit 0); its LCL shape has only ever <em>skipped</em> (no Lazarus LCL
+        units on the FPC box). CrossSocket's eight shapes were run against the shared
+        client at v1.0.6 (2026-05-26), per <code>samples/tests/README.md</code>, and the
+        Delphi ones re-run on 2026-10-12 (below). The mORMot Windows Service sample was wired to the
+        <em>CrossSocket</em> service class until 2026-09-04 (mORMot commit
+        <code>6ad5c03</code>), so it never exercised mORMot before then, and no run is
+        recorded after. <strong>mORMot VCL: first recorded run 2026-10-09</strong> — 131/131 on the thread pool with <code>HORSE_PROVIDER_MORMOT</code>, transport confirmed by the provider's <code>Server: unknown</code> banner. That run first had to fix two sample defects: the VCL project lacked the define (it would have served on Indy and passed), and its <code>.dfm</code> said <code>inherited</code> over a code-only base. <strong>mORMot Windows Service: first recorded run the same day</strong> — 131/131 under the SCM, clean <code>sc stop</code> drain, port released; it first needed the sample's lost <code>GetServiceController</code> override restored (without it every start died with SCM 1067). </p>
+      <p>
+        <strong>Windows Service, all four external providers: recorded 2026-10-12</strong>
+        (Delphi 12, Win64 Release, installed and run under the SCM). Every provider's
+        service base class now implements <code>GetServiceController</code> and has its own
+        <code>.dfm</code>. Transport proven per run.
+      </p>
+      <ul>
+        <li><strong>mORMot</strong> v1.0.18/v1.0.19, WinService test shape: 131/131,
+          <code>/diag/provider</code> <code>THorseProviderMormot</code>, clean stop.</li>
+        <li><strong>CrossSocket</strong> v1.0.30, WinService test shape: 139/139,
+          <code>THorseProviderCrossSocketDaemon</code>, clean stop. The v1.0.29 run had been
+          on Indy, because the shape's project set no provider define.</li>
+        <li><strong>nghttp2</strong> 1.12.0 service demo: <code>/ping</code> and
+          <code>/status</code> over h2c from WSL, clean drain.</li>
+        <li><strong>ICS</strong> v1.0.13/v1.0.14 service sample: RUNNING, <code>/status</code>
+          PID equals the netstat PID, <code>/echo</code>, clean stop. A taken port gives
+          STOPPED plus an event-log error.</li>
+      </ul>
+      <p>
+        <strong>CrossSocket, the other shapes, same day:</strong> VCL 139/139
+        (<code>THorseProviderCrossSocketVCL</code>); Linux daemon 139/139 (Linux64 binary on
+        WSL2 Ubuntu 22.04, <code>THorseProviderCrossSocketDaemon</code>, SIGTERM clean); both
+        Console shapes 139/139. The Lazarus shapes remain un-run. ICS has no VCL sample, and
+        nghttp2's VCL shape has no run recorded. No provider has been built for or run on
+        macOS.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The two hosting models</h2>
+    <div class="verdicts">
+
+      <div class="card cost">
+        <h3>In-process — the web server owns the socket</h3>
+        <ul>
+          <li>
+            <strong>Horse supports all four. Fully.</strong>
+            <span>
+              ISAPI under IIS, an Apache module, CGI and FastCGI are first-class,
+              long-standing Horse deployment targets. If you need one, use it — the
+              framework, your routes and your middleware all work.
+            </span>
+          </li>
+          <li>
+            <strong>They are an alternative to a provider, not a feature of one</strong>
+            <span>
+              These are the third axis of Horse's define model
+              (<code>HORSE_HOST_*</code>), parallel to <code>HORSE_PROVIDER_*</code>
+              rather than combinable with it. The host process accepts the connection
+              and hands Horse a parsed request — there is no socket left for a
+              transport provider to own.
+            </span>
+          </li>
+          <li>
+            <strong>Which is why those cells read "n/a", not "—"</strong>
+            <span>
+              "Not available" would mean a gap. This is a category difference: asking
+              which provider to use with ISAPI is like asking which engine to put in a
+              towed trailer. <code>Horse.pas</code> makes it explicit with a
+              <code>{$MESSAGE FATAL}</code> for every
+              <code>HORSE_PROVIDER_*</code> × <code>HORSE_HOST_*</code> pairing, so the
+              compiler names the conflict rather than letting you discover it at run
+              time.
+            </span>
+          </li>
+          <li>
+            <strong>What you trade away</strong>
+            <span>
+              The provider's capabilities go with it: no HTTP/2, no gRPC, no
+              WebSocket, no event loop, no transport-level graceful drain. You inherit
+              whatever the host process does instead — which for IIS and Apache is a
+              great deal, just not these.
+            </span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="card only">
+        <h3>Reverse proxy — the provider keeps its socket</h3>
+        <ul>
+          <li>
+            <strong>Works with every provider</strong>
+            <span>
+              Horse self-hosts on a port; nginx, Apache or IIS forwards to it. This is the
+              normal production shape, and it is how you get TLS termination, static-file
+              serving and load balancing without giving up a provider's capabilities.
+            </span>
+          </li>
+          <li>
+            <strong>nghttp2 constrains what can front it</strong>
+            <span>
+              It speaks HTTP/2 only, so the proxy must reach the backend over HTTP/2 —
+              not merely accept HTTP/2 from browsers, which nearly all of them do. Most
+              proxies downgrade to HTTP/1.1 on the back leg by default, and that back leg
+              is what matters here.
+            </span>
+          </li>
+          <li>
+            <strong>Every other provider is HTTP/1.1 on the back leg</strong>
+            <span>
+              Which is exactly what proxies do by default, so they are unconstrained.
+            </span>
+          </li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Where the providers live</h2>
+    <div class="verdicts">
+      <div class="card">
+        <h3>Internal — ship with Horse</h3>
+        <ul>
+          <li><strong>Indy</strong><span>Delphi default for self-hosted builds. No define needed.</span></li>
+          <li><strong>fphttpserver</strong><span>FPC default. No define needed.</span></li>
+          <li><strong>HTTP.sys</strong><span><code>HORSE_PROVIDER_HTTPSYS</code> — binds the Windows kernel HTTP stack via <code>httpapi.dll</code>.</span></li>
+          <li><strong>epoll</strong><span><code>HORSE_PROVIDER_EPOLL</code> — Linux-native event loop.</span></li>
+          <li><strong>IOCP</strong><span><code>HORSE_PROVIDER_IOCP</code> — Windows completion ports over Winsock2.</span></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>External — installed via Boss</h3>
+        <ul>
+          <li><strong>CrossSocket</strong><span><code>HORSE_PROVIDER_CROSSSOCKET</code> — async HTTP/1.1, IOCP/epoll/kqueue.</span></li>
+          <li><strong>mORMot</strong><span><code>HORSE_PROVIDER_MORMOT</code> — the mORMot2 stack, incl. its own http.sys binding.</span></li>
+          <li><strong>ICS</strong><span><code>HORSE_PROVIDER_ICS</code> — OverbyteICS, modern OpenSSL. Delphi only.</span></li>
+          <li><strong>nghttp2</strong><span><code>HORSE_PROVIDER_NGHTTP2</code> — libnghttp2. Requires <code>Delphi-nghttp2</code> &ge; 1.7.0, which is where the gRPC layer itself lives; this provider is the adapter that mounts it on Horse.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What nghttp2 alone brings</h2>
+    <div class="verdicts">
+
+      <div class="card only">
+        <h3>Only here</h3>
+        <ul>
+          <li>
+            <strong>gRPC as a transport</strong>
+            <span>
+              Unary plus all three streaming shapes — server, client and
+              bidirectional — with a protobuf codec, HTTP/2 trailers and two
+              registration styles. Crucially it shares the port and connection with
+              ordinary Horse routes: a <code>/health</code> endpoint and a gRPC
+              service on one listener.
+
+              The layer itself lives in <code>Delphi-nghttp2</code>, not here — it
+              only ever took an <code>INghttp2Stream</code>, so nothing about it was
+              Horse-specific. This provider contributes two guarded lines. That
+              matters when comparing providers: what this row scores is a capability
+              the transport library supplies, which the adapter exposes.
+            </span>
+          </li>
+          <li>
+            <strong>HTTP/2 you control</strong>
+            <span>
+              HTTP.sys also serves HTTP/2, but the kernel negotiates it and hands you a
+              finished request. nghttp2 exposes streams, trailers, GOAWAY and flow control
+              — which is what makes gRPC possible on top of it.
+            </span>
+          </li>
+          <li>
+            <strong>HTTP/2 anywhere</strong>
+            <span>
+              The only HTTP/2 option that is not Windows-only, and the only one that
+              works on FPC.
+            </span>
+          </li>
+          <li>
+            <strong>Protocol-correct drain</strong>
+            <span>
+              Two-stage GOAWAY per RFC 9113 §6.8: stop accepting new streams, let
+              in-flight ones finish, then send a cutoff the peer can act on.
+            </span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="card cost">
+        <h3>What you give up</h3>
+        <ul>
+          <li>
+            <strong>HTTP/1.1 — entirely</strong>
+            <span>
+              The server speaks HTTP/2 exclusively. HTTP/1.1-only clients cannot connect
+              at all. This is the single biggest constraint and rules the provider out
+              for public-facing endpoints without a terminating proxy.
+            </span>
+          </li>
+          <li>
+            <strong>WebSocket reaches fewer clients</strong>
+            <span>
+              Implemented via RFC 8441 extended CONNECT and opt-in, but there is no
+              RFC 6455-over-HTTP/1.1 path here. Browsers negotiate 8441 transparently;
+              most non-browser WebSocket libraries cannot, and for them the result is
+              "cannot connect" rather than a slower path. Indy, epoll and IOCP serve
+              every client.
+            </span>
+          </li>
+          <li>
+            <strong>Zero-install simplicity</strong>
+            <span>
+              Needs <code>Delphi-nghttp2</code> &ge; 1.7.0 plus libnghttp2 ≥ 1.59 at
+              runtime. Every internal provider needs nothing.
+            </span>
+          </li>
+          <li>
+            <strong>gRPC needs FPC trunk</strong>
+            <span>
+              Only gRPC. The transport builds and passes on 3.2.2 like every other
+              provider — this was listed here as "requires trunk 3.3.1, a hard blocker"
+              until 2026-08-23, which overstated it by the whole transport. 3.2.2 lacks
+              <code>TCustomAttribute</code>, so the attribute-driven codec cannot
+              compile; define <code>NGHTTP2_GRPC_NO_FFI</code> and you get HTTP/2, TLS,
+              streaming and WebSocket on the stock distro compiler.
+            </span>
+          </li>
+          <li>
+            <strong>Kernel-mode offload</strong>
+            <span>
+              HTTP.sys parses and queues in kernel space with machine-wide port sharing.
+              Nothing in userspace matches that on Windows.
+            </span>
+          </li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Notes on the partials</h2>
+    <div class="notes">
+      <p>
+        <strong>TLS 1.3 + SNI</strong> — ICS is scored full because it ships OpenSSL 3.x/4.x
+        and exposes SNI directly. CrossSocket, mORMot and nghttp2 reach TLS 1.3 only as far
+        as the OpenSSL they find at runtime allows, and none exposes SNI as a first-class
+        setting. HTTP.sys defers entirely to the Windows certificate store and
+        <code>netsh http add sslcert</code>.
+      </p>
+      <p>
+        <strong>Cipher and version rows</strong> — OpenSSL configures TLS 1.2 cipher
+        <em>rules</em> and TLS 1.3 cipher <em>suites</em> through separate calls, and
+        <code>SSLCipherList</code> never affects TLS 1.3 — the connection most OpenSSL 3.x
+        clients negotiate. ICS (v1.0.10), mORMot (v1.0.14), CrossSocket (v1.0.27) and nghttp2 (1.11.0) all
+        restrict TLS 1.3 suites in a release today; the last two since 2026-10-07, on Horse
+        3.3.12, which carries the shared config fields (HashLoad/horse #597). ICS reads the list back, because OpenSSL silently drops a misspelled
+        suite name next to a valid one; mORMot checks names against the five RFC 8446
+        suites instead (mORMot2 has no read-back) and needs mORMot2 2.4.16916+, refusing the
+        field on older mORMot2 as v1.0.11 did.
+        nghttp2 reads its list back like ICS; CrossSocket checks names against the RFC 8446
+        list like mORMot (DCS has no read-back). For the minimum version, ICS (v1.0.9),
+        nghttp2 (1.11.0) and CrossSocket (v1.0.28, through DCS <code>SetMinTlsVersion</code>,
+        winddriver #207) offer a real "TLS 1.3 only", all read back; Indy's <code>SSLVersions</code> can raise the floor but its stock
+        OpenSSL path tops out at TLS 1.2, and mORMot fixes the minimum at TLS 1.2 with no
+        setter. CrossSocket v1.0.27 refused <code>htvTLS13</code> at <code>Listen</code>
+        rather than ignore it; wire-checked in v1.0.28 by run-tls-tests C5a (a TLS 1.2
+        peer is refused) and C5b (TLS 1.3 served).
+      </p>
+      <p>
+        <strong>mTLS on HTTP.sys</strong> — configured outside the process, through the
+        OS, not through Horse.
+      </p>
+      <p>
+        <strong>Every ● in the TLS and mTLS rows is now backed by a completed
+        handshake, not by a config field.</strong> All three provider suites were run
+        for the first time on 2026-09-24, and all three found something: the mORMot
+        provider was serving plain TCP (FIX-MORMOT-TLS-1, v1.0.9); the CrossSocket
+        gate had never executed, though its provider was correct; and the ICS provider
+        <em>accepted clients presenting no certificate at all</em> while
+        <code>SSLVerifyPeer</code> was set (FIX-ICS-MTLS-1, v1.0.6). That last one had
+        no symptom — TLS completed, traffic flowed, a valid client certificate was
+        honoured — so this row read ● on ICS and was wrong until that release.
+        Re-verify these two rows by running each repo's
+        <code>run-tls-tests.bat</code>, never by grepping for the config fields.
+      </p>
+      <p>
+        <strong>Event loop on ICS and nghttp2</strong> — ICS uses its own message pump
+        rather than a shared loop. nghttp2 defaults to thread-per-connection; the epoll/IOCP
+        engine is opt-in via <code>UseEventLoop</code>.
+      </p>
+      <p>
+        <strong>Graceful shutdown</strong> — marked partial where the provider inherits the
+        framework base rather than overriding <code>StopListenGraceful</code> with a
+        transport-aware drain, so <code>ATimeoutMS</code> is accepted and discarded. What
+        those providers do instead varies, and it is not uniformly "stop accepting without
+        draining" — mORMot waits for in-flight work and then discards the reply. Read the
+        measured paragraph below before inferring behaviour from a partial mark.
+      </p>
+      <p>
+        <strong>Graceful shutdown, measured rather than read</strong> (2026-09-24/25) —
+        a drain probe per provider, 5 runs each, with a control: three distinct timings
+        so elapsed time names the cause. A 5000 ms handler, the provider's own
+        <code>DrainTimeoutMs</code> at 3000, <code>StopListenGraceful(500)</code>, and
+        shutdown fired 800 ms into the request. Control C0 — the same request undisturbed
+        — passed 5/5 on every provider, which is what makes a lost response readable;
+        without it a broken route and a severed request look identical.
+        <strong>mORMot: FIXED 2026-09-27 (FIX-MORMOT-GRACEFUL-1), and upgraded to full — released 2026-09-28 in horse-provider-mormot v1.0.10.</strong>
+        <strong>Backend caveat (found 2026-10-06, fixed and RELEASED 2026-10-06 in v1.0.12 — FIX-MORMOT-GRACEFUL-2, PR #10, tag on merge da6fb43):</strong>
+        every number below was the thread-pool backend. On the http.sys backend
+        (<code>mskHttpApi</code>) the reply was lost on <em>every</em> run (11/11, WinHTTP
+        12030), because the drain counter drops before mORMot sends and
+        <code>THttpApiServer</code> closes its request queue before joining its threads. v1.0.12
+        also waits for mORMot's own <code>CurrentProcess</code> = 0. Measured on v1.0.12: thread pool 60/60,
+        async 60/60, http.sys 20/20. <strong>http.sys has further limits beyond shutdown</strong> (found 2026-10-06 by the integration suite, all in mORMot2's http.sys binding): chunked request bodies were delivered EMPTY — refused with 411 since <strong>v1.0.13</strong> (FIX-MORMOT-HTTPSYS-CHUNKED-1, released); only the last <code>Set-Cookie</code> is sent; integration 118/126 vs 126/126 on the thread pool.
+        It overrides <code>StopListenGraceful</code> as <code>FServer.Shutdown</code> →
+        drain bounded by the caller's timeout → free, and returns in
+        <strong>735-752 ms</strong> for 700 ms of remaining work, with the reply intact in
+        <strong>79 of 80 runs</strong>. The one loss is unexplained and is NOT the
+        async-write gap it resembles: a 60-run A/B with the settle at 0 versus 100 ms came
+        back 60/60 both ways, so the default stays at 0 rather than gaining a delay on no
+        evidence. Point estimate 1.25%; 60 runs rule out 5% but not 1%, and characterising
+        it further needs ~184 runs per arm with no candidate mechanism to test — so it is
+        recorded as a rare open defect with a detector (<code>run-drain-batch.bat</code>
+        keeps each failing run's output) rather than chased. It earns the full mark because <code>THttpServerGeneric.Shutdown</code> only
+        sets a flag and <code>Request()</code> then answers <strong>404 to new work</strong>
+        while in-flight requests keep their thread and socket — a clean refusal rather than
+        a closed listener, which is exactly what lets it perform all three steps this row
+        asks for. (The 404 is mORMot's choice; 503 would be better and would have to come
+        from the pipeline.) It needs <strong>no settle delay</strong>, because it writes the
+        reply synchronously in the request thread. Before the fix:
+        <strong>4200 ms</strong> (4199-4225) = <code>5000 − 800</code>, bounded by neither
+        timeout, reply lost every time (WinHTTP 12152) — and lost when the handler
+        FINISHED, not when shutdown began, which is why its fix was a pure ordering change
+        rather than CrossSocket's.
+        <strong>ICS: FIXED 2026-09-27 (FIX-ICS-GRACEFUL-1), released 2026-09-28 in horse-provider-ics v1.0.8.</strong> It overrides
+        <code>StopListenGraceful</code> and returns in <strong>701-718 ms</strong> for
+        700 ms of remaining work with the reply intact, 5/5. Its drain is the best of the
+        three because the correct wait is <em>countable</em> here: a finished ICS worker
+        has only <code>PostMessage</code>'d its response, and the socket write happens on
+        the main thread when the pump runs it, so the drain waits on
+        <code>FActiveRequests</code> + <code>FPendingMap</code> + <code>FPostBuffers</code>
+        under <code>FPendingLock</code>, on one shared deadline — no settle delay at all.
+        Ending the pump early is what used to lose the reply:
+        <code>FServer.Terminated</code> stops <code>MessageLoop</code>, and that loop is
+        how ICS writes anything. <strong>Upgraded to full 2026-09-28 (FIX-ICS-GRACEFUL-2).</strong> It now stops
+        accepting before draining, so it performs all three steps this row asks for.
+        <code>THttpServer.Stop</code> is separably
+        <code>FWSocketServer.MultiClose</code> (closes the listeners) then
+        <code>DisconnectAll</code> (drops the clients), so <code>MultiClose</code> alone
+        halts new connections while established clients keep their sockets — ICS's own
+        idiom, used by <code>SetPortValue</code> to rebind a port under the comment "Do
+        not disconnect already connected clients." Measured rather than assumed, because
+        the equivalent step on CrossSocket destroys the in-flight body: 5/5 at 703-720 ms
+        with the body asserted, and elapsed unchanged, so it costs nothing.
+        Before the fix: <strong>4204 ms</strong> (4196-4214), the same wait, but the
+        response lost at ~810 ms — the instant shutdown began. So ICS blocked the caller
+        as long as mORMot and gave the client less, and its 2026-08-22 upgrade
+        to full is <strong>retracted here</strong>: downgraded to partial.
+        <strong>CrossSocket: FIXED 2026-09-27 (FIX-CS-GRACEFUL-1), released 2026-09-28 in
+        horse-provider-crosssocket v1.0.25.</strong> It overrides
+        <code>StopListenGraceful</code>, honours the caller's timeout, and returns in
+        800-832 ms for 700 ms of remaining work with the response intact, 5/5 — against
+        4193-4203 ms and a lost reply before. <strong>Its mark stays partial</strong>, by
+        this row's own criterion: it does <em>not</em> stop accepting during the drain.
+        Closing the listening socket is what a graceful shutdown should do first, and in
+        DCS it destroys the in-flight response body — headers go out, the body never does,
+        and the client reads 200 with an empty body and no error at all. Proven by
+        bisecting one step at a time; the mechanism is still unexplained. (An earlier
+        0/100/1000 ms settle sweep read as ruling out a flush race — that reading is
+        <strong>RETRACTED</strong>: it was taken while <code>CloseAllListens</code> was
+        still masking the race, and with the listener step gone a 0 ms settle fails about
+        1 in 2. The sweep was a measurement of the mask, not of the race.) Refusing new work belongs in the pipeline (<code>IsShuttingDown</code> →
+        503), not in the listener — which is effectively what mORMot does, and why it
+        earns a full mark here while CrossSocket does not. The settle is <strong>GONE as of
+        2026-09-28 (FIX-CS-DEFER-1 + -2, provider commits <code>ab8d6fd</code> +
+        <code>a7893de</code>)</strong>, and that one WAS measured properly: the one-shot
+        path now defers <code>DecrementActive</code> to CrossSocket's send-completion
+        callback, as the streaming path always did, so the drain counter reaching zero
+        means the bytes have left. A/B at <code>HORSE_CS_SETTLE_MS=0</code>, one machine:
+        <strong>4 failures in 60 runs before, 0 in 180 after</strong>, Fisher one-tailed
+        <strong>p = 0.0036</strong> — and every pre-change failure read
+        <code>Content-Length: 4</code> with <code>body length 0</code>, which is that
+        window and not a severed connection, a timeout or a port collision (the probe
+        reports each differently). <code>DEFAULT_SETTLE_MS</code> is now 0, worth ~100 ms
+        off every graceful shutdown (10/10 at 696–714 ms against 808–819 with the sleep).
+        So the earlier caveat that a response larger than the socket buffer could outlive
+        the settle is <strong>retired</strong> — there is no window left to outlive.
+        <code>Horse.Provider.Console</code> carries the identical sleep and was
+        deliberately NOT touched: different write path, and generalising this result to it
+        is the move that has cost time here. Before the fix it measured
+        <strong>4193-4203 ms</strong> (10/10 with its control across two builds, after its probe's earlier void runs turned out to be a port collision
+        with a browser's DevTools endpoint, not a provider defect). Same wait as the other
+        two — 4200 is <code>5000 &minus; 800</code>, the rest of the request, not the
+        3000 ms config value — and the in-flight response is lost at <strong>809-819 ms</strong> — the instant shutdown begins, as on
+        ICS. So <strong>all three external providers are now measured and all three
+        behave the same way:</strong> the call is bounded by neither timeout, it waits
+        out the whole request, and the client gets nothing. The differentiator this row
+        used to claim does not exist anywhere in it.
+      </p>
+      <p>
+        <strong>Graceful shutdown, the earlier reading pass</strong> (2026-08-22) — kept
+        for the reasoning it records, superseded above wherever the two disagree. It
+        re-read each stop path rather than grepping for the method name, which had scored
+        two cells wrong in each direction. Full marks require stopping accepts, then
+        waiting on in-flight work, then tearing down.
+        <strong>ICS</strong> was read as the only external provider doing all three in
+        order: <code>FServer.Stop</code>, then <code>FDrainEvent.WaitFor(DrainTimeoutMs)</code>
+        while an interlocked counter is non-zero, with the event signalled from a
+        <code>finally</code> on both the success and exception paths — and upgraded to
+        full on that basis. <strong>Running it disproved the upgrade:</strong> the
+        ordering is real and buys nothing the client can see.
+        <strong>HTTP.sys</strong> was downgraded: it closes the completion port and
+        calls <code>HttpCloseRequestQueue</code>, which its own comment describes as
+        cancelling pending calls, <em>before</em> joining its listener threads — that
+        is a forced stop, not a drain.
+        <strong>mORMot</strong> has the same machinery as ICS but frees the server
+        first, and its comment concedes the counter "should already be 0" by the time
+        the timeout is honoured — partial, and the measurement agrees.
+        <strong>epoll</strong> joins each worker (<code>Terminate; WaitFor</code>), so
+        in-flight handler work finishes, but there is no counter and
+        <code>ATimeoutMS</code> is ignored — partial.
+        <strong>IOCP</strong> and <strong>fphttpserver</strong> have no drain at all;
+        they inherit a base that sets a flag, calls <code>StopListen</code> and
+        discards the timeout.
+      </p>
+      <p>
+        <strong>Every mark in this row is for the static <code>THorse</code> facade.</strong>
+        The Multi-Instance path (<code>THorseInstance.StopListenGraceful</code>) had two
+        defects on top of it. Up to Horse 3.3.9 it called its own <code>StopListen</code>,
+        discarding <code>ATimeoutMS</code> and bypassing every provider override &mdash;
+        fixed in 3.3.10 by <a href="https://github.com/HashLoad/horse/pull/590">#590</a>.
+        <strong>That was not enough</strong>: <code>Execute</code> counts an
+        instance-routed request on the <em>instance's</em> counter, while every built-in
+        drain polled <code>THorseCore</code>'s alone, so on the instance path the drain
+        saw zero and closed the connection mid-request on IOCP, HTTP.sys, FPC.Daemon and
+        FPC.LCL. Indy (Console/Daemon/VCL) survived because it also waits on its open
+        contexts; CrossSocket, mORMot, ICS and nghttp2 count at the transport and were
+        never affected. Proven 2026-10-03 by a control matrix (master fails on IOCP and
+        HTTP.sys; fixing only the test's bind turns HTTP.sys's failure from
+        &ldquo;cannot connect&rdquo; into &ldquo;cut mid-request&rdquo;; with the drain fix
+        12/12 pass) and filed as
+        <a href="https://github.com/HashLoad/horse/pull/599">#599</a>, <strong>merged and
+        released in Horse 3.3.11</strong> (2026-10-05; the six built-in drains plus
+        <code>Horse.Instance</code> verified identical to our patch at the 3.3.11 tag). On Horse
+        &ge; 3.3.11 the IOCP and HTTP.sys marks apply to <code>THorseInstance</code> too; on
+        3.3.10 and earlier, read them as applying to <code>THorse</code> only.
+      </p>
+      <p>
+        <strong>Do not confuse Horse's IOCP provider with nghttp2's IOCP engine.</strong>
+        The column above is <code>Horse.Provider.IOCP</code>, which has no drain — that
+        mark is unchanged. <code>Nghttp2.Engine.Iocp</code> is a different thing: the
+        event-loop driver inside the nghttp2 provider, whose graceful shutdown was
+        <strong>validated 2026-08-22</strong> and delivered every in-flight response
+        across all three shapes — 1 request, 4 concurrent on 4 connections, and
+        8 streams multiplexed on 1 connection — with the resolved driver asserted as
+        <code>IOCP completion port</code> rather than a silent fallback. The nghttp2
+        column's full mark covers that engine, and now covers it on Windows as well
+        as Linux.
+      </p>
+      <p>
+        <strong>WebSocket on fphttpserver</strong> — downgraded to partial: it depends
+        on the application shape, not the transport. <code>Horse.WebModule.pas</code>
+        registers an upgrader only inside <code>{$IF NOT DEFINED(FPC)}</code>, so the
+        plain HTTPApplication shape has none and <code>UpgradeToWebSocket</code> takes
+        the fail-fast path to <code>501</code>. The Daemon and LCL shapes do register
+        one (<code>THorseWebSocketSocketUpgrader</code>, via <code>GetSocket</code>),
+        so WebSocket works there — subject to the FPC <code>FeedBytes</code> defect
+        noted below.
+      </p>
+      <p>
+        <strong>WebSocket on nghttp2</strong> — scored partial, and the caveat is
+        reach rather than completeness. It is implemented via RFC 8441 extended
+        CONNECT (<code>:method CONNECT</code> + <code>:protocol websocket</code>,
+        answered <code>200</code> — HTTP/2 has no <code>101</code>) and is opt-in via
+        <code>EnableWebSocket</code>. Browsers negotiate it transparently;
+        <code>new WebSocket(...)</code> is unchanged. Most non-browser WebSocket
+        libraries speak RFC 6455 over HTTP/1.1 only, and this transport has no
+        HTTP/1.1 to fall back to — so for those clients the result is "cannot
+        connect", not "slower path". <strong>Validated end-to-end 2026-08-21</strong>
+        against a Python <code>h2</code> client (<code>build-fpc.sh</code> stage 18,
+        4/4): extended CONNECT accepted, server frame delivered, and a masked client
+        frame round-tripped. The partial mark reflects client reach, not
+        completeness.
+      </p>
+      <p>
+        <strong>WebSocket receive was broken in shipped Horse on two paths</strong> —
+        found while validating the above. <strong>Both are now merged and shipped:</strong>
+        #551 on 2026-08-28, #549 on 2026-09-04, both in <strong>Horse 3.3.4</strong>. On
+        3.3.4 or later the ● marks in this row describe actual behaviour; on earlier
+        releases they describe intended capability only. The maintainer reworked #549
+        rather than merging it as filed — errno is captured once and passed to both
+        predicates, and close is deferred behind a state lock and an active-operation
+        refcount instead of closing the descriptor under a blocked <code>select()</code>.
+        Re-verified against that reworked code on 2026-09-05, 5/5 on FPC 3.2.2.
+        (1) <code>Horse.Provider.Socket.WebSocket.Read</code> treats a non-blocking
+        <code>recv</code> returning <code>EAGAIN</code> as a disconnect; epoll sets
+        <code>O_NONBLOCK</code> on every accepted socket, so the read loop exits ~1 ms
+        after the upgrade and nothing a client sends is ever delivered
+        (<a href="https://github.com/HashLoad/horse/pull/549">PR #549</a>). IOCP is
+        unaffected — it leaves sockets blocking, verified. (2) On <strong>FPC only</strong>,
+        <code>Horse.Core.WebSocket.FeedBytes</code> casts an interface reference back
+        to a class, which FPC does not resolve, so <code>OnMessage</code>,
+        <code>OnBinary</code> and <code>OnError</code> never fire
+        (<a href="https://github.com/HashLoad/horse/pull/551">PR #551</a>). Sending
+        works in both cases, which is why they went unnoticed. The ● marks in this
+        row describe intended capability; on epoll, and on FPC generally, receive
+        needs those patches.
+      </p>
+      <p>
+        <strong>Streaming on fphttpserver</strong> — works through the default WebBroker
+        stream writer rather than a transport-native one.
+      </p>
+      <p>
+        <strong>Keep-alive on fphttpserver was unusable before Horse 3.3.4.</strong> No
+        row scores it, because every other transport here does HTTP/1.1 persistent
+        connections natively and the comparison would be uniform — but this one is worth
+        recording. <code>KeepConnections</code> defaults to <code>False</code>, and
+        enabling it cost roughly 44 ms per request: <code>fphttpserver</code> writes each
+        response as two <code>send()</code> calls and never set <code>TCP_NODELAY</code>
+        on the accepted socket, so Nagle held the small second write until the peer ACKed
+        the first, and the peer — with nothing to send — waited out its ~40 ms
+        delayed-ACK timer. It was misread for a while as the keep-alive loop's
+        <code>select()</code> poll interval; the server <em>is</em> idle in
+        <code>select()</code> for ~43 ms, but waiting for a request the client cannot
+        send because it is still waiting for a body Nagle is holding.
+        <a href="https://github.com/HashLoad/horse/issues/562">Issue #562</a>, fixed in
+        <a href="https://github.com/HashLoad/horse/pull/563">#563</a>: upstream sets
+        <code>TCP_NODELAY</code> per connection via
+        <code>THorseNoDelaySocketHandler.Accept</code> and sets a positive
+        <code>KeepConnectionTimeout</code>, without which <code>KeepConnections</code>
+        alone leaves the connection thread serving exactly one request. Measured after
+        the fix: 30 requests on one reused connection, max 1 ms. <strong>Note this is a
+        Horse-version property, not a transport capability</strong> — on Horse &lt; 3.3.4
+        the same provider has it and it is slow.
+      </p>
+      <p>
+        <strong>Still open on Windows.</strong> 3.3.4 enables keep-alive on every
+        platform but guards the <code>TCP_NODELAY</code> handler with
+        <code>{$IFDEF UNIX}</code>, so FPC/Windows now has the stall's exact
+        precondition — enabled keep-alive, no <code>TCP_NODELAY</code> — where before
+        3.3.4 it could not occur because keep-alive was off. Reported upstream; not
+        measured here, as this workspace has no FPC/Windows setup.
+      </p>
+      <p>
+        <strong>gRPC here is server-side only.</strong> Every provider in this table is
+        a server — that is what a provider is — so the row scores the ability to
+        <em>serve</em> gRPC, and no column could answer otherwise. Worth saying because
+        the ecosystem's other Pascal gRPC options split on exactly this: sgcWebSockets
+        ships a client and no server, ultraware/DelphiGrpc does both. The client side
+        lives in the <em>library</em>, not in any provider: since Delphi-nghttp2
+        <strong>1.28.0</strong> (2026-10-14), <code>Nghttp2.Grpc.Client</code>'s
+        <code>TGrpcChannel</code> makes unary and server-streaming calls (deadlines,
+        metadata, TLS + mTLS with server verification), and <code>protogen --client</code>
+        generates typed stubs. It is tested against our own server, python grpcio and a
+        raw HTTP/2 peer (library stage 4l, 71 checks; stage 4m, the generated stubs).
+        Client and bidi streaming <em>from the client</em> are not there yet (GC5). It
+        calls any gRPC server, so it is not scored per column here. See
+        <a href="pascal-grpc-landscape.html">pascal-grpc-landscape.html</a> for the
+        client/server split across the wider ecosystem.
+      </p>
+      <p>
+        <strong>nghttp2 on FPC</strong> — partial because of the gRPC layer, not the
+        transport. Full parity on trunk 3.3.1. On <strong>3.2.2 the transport is fully
+        supported</strong> — HTTP/2, TLS, mTLS, the epoll engine, streaming,
+        backpressure and WebSocket RFC 8441 all build and pass there (25 stages, 0
+        failures, re-verified 2026-08-23). Only gRPC needs trunk, because 3.2.2's
+        <code>Rtti</code> unit declares no <code>TCustomAttribute</code>, and it is
+        separable behind <code>NGHTTP2_GRPC_NO_FFI</code> so the gRPC stages skip
+        loudly rather than failing.
+        <em>Corrected 2026-08-23: this note previously read "unusable on 3.2.2", which
+        was wrong and mattered — <code>apt-get install fpc</code> gives 3.2.2, and that
+        is the compiler Horse's own CI installs.</em>
+        Separately, <code>RegisterService&lt;T&gt;</code> needs libffi even on trunk: it
+        dispatches through <code>TRttiMethod.Invoke</code>, and FPC has no built-in
+        call manager, so <code>ffi.manager</code> must be linked. The procedural
+        <code>RegisterMethod</code> never reaches <code>Invoke</code> and needs none of
+        it.
+      </p>
+      <p>
+        <strong>nghttp2 behind nginx</strong> — use <code>grpc_pass</code>, which speaks
+        h2c to the backend, for both gRPC and plain HTTP/2 routes. A plain
+        <code>proxy_pass</code> will not work: nginx's <code>proxy_http_version</code>
+        tops out at <code>1.1</code>, so the back leg cannot reach an HTTP/2-only server
+        no matter what the front leg negotiates.
+      </p>
+      <p>
+        <strong>nghttp2 behind Apache</strong> — needs <code>mod_proxy_http2</code> and an
+        <code>h2c://</code> backend URL. The commonly configured
+        <code>mod_proxy_http</code> is HTTP/1.1-only on the back leg and will fail.
+      </p>
+      <p>
+        <strong>nghttp2 behind IIS</strong> — scored unavailable because ARR forwards to
+        backends over HTTP/1.1 and offers no HTTP/2 back-leg option. Front an nghttp2
+        service with nginx or Apache, or expose it directly.
+      </p>
+      <p>
+        <strong>nghttp2 direct to internet</strong> — fine for gRPC, service-to-service
+        traffic and controlled clients. Partial only because browsers reach HTTP/2
+        through TLS + ALPN, so a public endpoint needs a real certificate; and any
+        HTTP/1.1-only client is refused outright rather than downgraded.
+      </p>
+      <p>
+        <strong>Shapes marked partial</strong> — the provider has no dedicated shape unit
+        but still runs in that shape by driving <code>Listen</code> from the host's own
+        loop or a worker thread. What you lose is the convenience base class
+        (auto-<code>Listen</code> on form create, <code>TService</code> wiring), not the
+        capability. epoll under VCL and IOCP/HTTP.sys under LCL are the notable cases.
+      </p>
+      <p>
+        <strong>ICS on Linux</strong> — <strong>not possible with ICS V9.x</strong>
+        (corrected 2026-10-09; this cell was "◐"). ICS V9.7 refuses to compile for POSIX
+        on purpose: <code>OverbyteIcsTypes.pas</code> line 177 holds the string
+        <code>'ICS V9 does nbt build for Posix, use ICS V10'</code> under
+        <code>{$IFDEF POSIX}</code>, so the first real Delphi Linux64 build stopped with
+        E2029. The provider's <code>THorseICSLinuxDaemonApp</code> was never compiled.
+        Linux needs ICS V10 (beta), and the provider needs a port first:
+        <code>horse-provider-ics/plans/ics-v10-support.md</code>. Grep:
+        <code>grep -an "use ICS V10" icsv97/Source/OverbyteIcsTypes.pas</code> (<code>-a</code>: the file is not UTF-8)
+      </p>
+      <p>
+        <strong>A separate gRPC path exists.</strong> Horse ships
+        <code>Horse.Provider.Grpc</code>, a standalone gRPC server with hand-rolled HTTP/2
+        framing. It is not a transport provider: it has no <code>HORSE_PROVIDER_*</code>
+        define, runs its own listener on its own port, carries no TLS at all, and does not
+        serve your Horse routes. Useful for h2c-only internal services; not a substitute
+        for the nghttp2 row above.
+      </p>
+    </div>
+  </section>
+
+</div>
