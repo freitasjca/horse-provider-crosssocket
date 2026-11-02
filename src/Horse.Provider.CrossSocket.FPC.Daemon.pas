@@ -68,9 +68,15 @@ uses
 {$IFDEF UNIX}
 procedure HandleStopSignal(ASignal: cint); cdecl;
 begin
-  // POSIX signal handlers must be reentrant-safe. THorse.StopListen sets
-  // a manual-reset event and calls FServer.Stop — both safe to invoke
-  // from a signal context on Linux glibc + FPC RTL.
+  // NOTE: calling THorse.StopListen from a POSIX signal handler is not strictly
+  // async-signal-safe — it frees the server, joins IO threads and re-enters the
+  // memory manager. A single SIGTERM/SIGINT works in practice on Linux glibc +
+  // FPC RTL. A SECOND signal arriving mid-teardown used to re-enter StopListen on
+  // another thread and double-free FServer -> SIGSEGV; that is now guarded at the
+  // provider level by FIX-CS-STOP-REENTRANT-1 (a TInterlocked guard in Stop /
+  // StopListenGraceful), so a repeated signal is safe. The fully-correct form is
+  // to set a flag here and call StopListen from the main thread; the guard makes
+  // this direct call safe enough for a daemon.
   THorse.StopListen;
 end;
 {$ENDIF}

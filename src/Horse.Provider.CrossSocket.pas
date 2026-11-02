@@ -159,6 +159,11 @@ type
     // Created signalled=False; SetEvent is called by Stop/StopListen to unblock.
     class var FStopEvent: TEvent;
     class var FRunning: Boolean;
+    // [FIX-CS-STOP-REENTRANT-1] 0 = not stopping, 1 = a teardown is in progress.
+    // Guards Stop / StopListenGraceful against a concurrent second entry (e.g. a
+    // second SIGTERM delivered to another thread) that would double-free FServer /
+    // FStopEvent. Atomic via TInterlocked; re-armed to 0 in ListenWithConfig.
+    class var FStopping: Integer;
 
     class function  GetPort: Integer; static;
     class procedure SetPort(const AValue: Integer); static;
@@ -309,6 +314,10 @@ begin
   // WebBroker factory registered in Horse.Response's initialization.
   RegisterCrossSocketStreamWriter;
 
+  // [FIX-CS-STOP-REENTRANT-1] Re-arm the stop guard for this listen cycle so a
+  // restart (Listen after a previous Stop) can be stopped again.
+  FStopping := 0;
+
   FServer := THorseCrossSocketServer.Create(AConfig);
 
   // [IMP-3] Assign directly to ExecutePipeline — HandleRequest was a
@@ -378,6 +387,10 @@ class procedure THorseProviderCrossSocket.StopListenGraceful(
   const ATimeoutMS: Integer
 );
 begin
+  // [FIX-CS-STOP-REENTRANT-1] Same re-entrancy guard as Stop — a second stop
+  // (graceful or hard, from any thread) must not run the teardown twice.
+  if TInterlocked.CompareExchange(FStopping, 1, 0) <> 0 then
+    Exit;
   TriggerBeforeStop;
   SetIsShuttingDown(True);
   try
@@ -403,6 +416,12 @@ end;
 // ── Stop ─────────────────────────────────────────────────────────────────────
 class procedure THorseProviderCrossSocket.Stop;
 begin
+  // [FIX-CS-STOP-REENTRANT-1] One winner tears down; a concurrent second entry
+  // returns immediately. Proven by samples/bench/repro-cs-shutdown.sh: a 2nd
+  // SIGTERM within the teardown window made two threads both FreeAndNil(FServer)
+  // / touch FStopEvent -> double-free -> SIGSEGV (single signal was always clean).
+  if TInterlocked.CompareExchange(FStopping, 1, 0) <> 0 then
+    Exit;
   FRunning := False;
 
   if Assigned(FServer) then
