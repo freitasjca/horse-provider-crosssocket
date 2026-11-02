@@ -17,8 +17,9 @@ There are three families:
 | Need | For | Notes |
 |---|---|---|
 | Delphi 10.4+ (Win) / Delphi Linux64 | everything | `scripts\check-env.bat` verifies the toolchain |
-| Built binaries | everything | `scripts\build.bat` (tests) + build the bench projects in the IDE |
+| Built binaries | everything | `scripts\build.bat` builds the *tests*. The **bench servers** are built in the IDE — open `samples\bench\HorseBenchGroup.groupproj`, Build All, **Release / Win64**. |
 | [`bombardier`](https://github.com/codesenberg/bombardier) | load/analysis scripts only | default path `c:\tools\bombardier\bombardier.exe` (edit `BOMB=` to change) |
+| [`h2load`](https://github.com/nghttp2/nghttp2) | HTTP/2 bench (`bench-h2`) only | drives **both** protocols (`--h1` for HTTP/1.1); default `c:\tools\h2load\h2load.exe` or on `PATH`. Ships with nghttp2 |
 | OpenSSL libs | TLS benches/tests | DLLs next to the exe (Win) / `libssl`+`libcrypto` (Linux); ICS bundles its own |
 | `certs\` fixtures | TLS only | committed under `samples\bench\certs` and `tests\certs`; scripts copy them next to the binaries |
 
@@ -28,6 +29,22 @@ scripts\check-env.bat
 scripts\build.bat Release Win64
 ```
 
+> **Where the bench exes land.** The bench `.dproj` files emit to
+> `..\..\bin\Win64\Release` relative to the repo — i.e. a shared `bin\` one level
+> *above* `horse-provider-crosssocket\` (here `C:\lang\Repo\bin\Win64\Release`).
+> Every bench script searches that dir (plus `scripts\`, `..\samples\bench\Win64\Release\`
+> and `..\Win64\Release\`), so once the group is built, run the scripts as-is. If
+> you build somewhere else, drop the exes into `scripts\` or set `SERVERS_DIR`.
+>
+> **ICS, nghttp2 and HTTP.sys have no `.dproj` yet** — their `.dpr` sources exist
+> (`Servers\ICS\`, `Servers\RawICS\`, `Servers\Nghttp2\`, `Servers\HttpSys\`) but you
+> must create a Console project for each in the IDE, add it to `HorseBenchGroup.groupproj`,
+> set the define (`HORSE_PROVIDER_ICS` / `HORSE_PROVIDER_NGHTTP2` / `HORSE_PROVIDER_HTTPSYS`)
+> and the unit search paths (copy an existing bench `.dproj` and swap the provider). The
+> Epoll server already ships as a Lazarus `.lpr` (`Servers\Lazarus\Epoll\`, built with FPC
+> for the `.sh` ladder). Until a project exists the scripts print `[ERR] binary not found`
+> for those rows and run everything else.
+
 ### Provider / port reference
 
 | Provider | Bare | +middleware | TLS (`--tls`/`--mtls`) | Raw baseline |
@@ -36,6 +53,22 @@ scripts\build.bat Release Win64
 | CrossSocket | 9002 | 9012 | **9032** | Raw-CrossSocket 9004 |
 | mORMot | 9003 | 9013 | **9033** | Raw-mORMot 9005 |
 | ICS | 9009 | 9019 | **9039** | **Raw-ICS 9010** |
+| Epoll *(Linux)* | 9043 | 9053 | — | — |
+| nghttp2 *(HTTP/2)* | 9041 | 9051 | — | Raw-nghttp2 9042 |
+| HTTP.sys *(Windows)* | 9045 | 9055 | — | — |
+
+> **Platform / protocol split — absence is not defeat:**
+> - **nghttp2** speaks HTTP/2 (h2c); everyone else HTTP/1.1. It is *not* in the
+>   bombardier ladder/scenarios (HTTP/1.1 drivers) — it has its own `h2load`
+>   comparison, **§4**.
+> - **ICS** and **HTTP.sys** are **Windows-only** — swept by the `.bat` ladder,
+>   scenarios and (ICS also) the in-repo client/TLS bench; never by the Linux `.sh`.
+>   HTTP.sys is kernel-mode and needs a **URL ACL** per port (it binds `127.0.0.1`;
+>   grant `netsh http add urlacl url=http://127.0.0.1:9045/ user=Everyone`, and `:9055`,
+>   or run elevated).
+> - **Epoll** is **Linux-only** (Horse built-in, `SO_REUSEPORT`) — swept by
+>   `bench-perf-ladder.sh` (FPC build), never by the `.bat` suite. 9053 (its mw port)
+>   is shared with the nghttp2 middleware block, which is fine: one server runs at a time.
 
 Integration-test ports are separate: functional **9100**, CrossSocket TLS **9101**,
 ICS TLS **9111**, mORMot TLS **9201**.
@@ -109,10 +142,16 @@ lifecycle themselves. Use **Release** builds.
 ```bat
 scripts\bench-perf-ladder.bat 100 200000 3
 ```
-The headline comparison: every provider × mode (bare / +headers / +cors, plus mORMot
-`--async` and `--httpapi`), driven by bombardier. Writes a results table. Linux:
-`scripts\bench-perf-ladder.sh`. Background reading: `bench-perf-ladder-windows.md`,
-`bench-perf-ladder-linux.md`.
+The headline comparison: every HTTP/1.1 provider × mode (bare / +headers / +cors,
+plus mORMot `--async` and `--httpapi`), driven by bombardier. Writes a results table.
+- **Windows (`.bat`):** Indy, CrossSocket, mORMot, **ICS**, **HTTP.sys** (+ raw baselines).
+  HTTP.sys rows need the URL ACL above; a cell with no ACL reports `noListen` and the
+  script prints the exact `netsh` fix.
+- **Linux (`scripts\bench-perf-ladder.sh`):** CrossSocket, mORMot, FPC-HTTP and the
+  built-in **Epoll** provider (FPC build) — no Indy/ICS/HTTP.sys (Windows-only).
+
+nghttp2 is HTTP/2 and is benched separately in **§4**. Background reading:
+`bench-perf-ladder-windows.md`, `bench-perf-ladder-linux.md`.
 
 ### Fixed scenarios — `bench-scenario1.bat` … `bench-scenario5.bat`
 ```bat
@@ -126,7 +165,10 @@ scripts\bench-scenario3.bat      REM GET /ping  c=500  n=500000 across all provi
 | 4 | `POST /echo` (256 B) | 100 | 100 000 |
 | 5 | `GET /alloc` | 100 | 100 000 |
 
-`run_bench_test.bat` launches all 8 servers (bare + middleware) and runs a default scenario.
+The scenarios now sweep 13 HTTP/1.1 endpoints (Indy / CrossSocket / mORMot / **ICS** /
+**HTTP.sys** bare + middleware, plus the raw baselines). `run_bench_test.bat` launches
+all 13 servers (bare + middleware) and runs the in-repo client (which now has an
+HTTP.sys column too). HTTP.sys rows need its URL ACL, else they report connection errors.
 
 ### Defect characterisation (keep-alive + header middleware 5xx)
 | Script | What it isolates | Usage |
@@ -143,6 +185,41 @@ See `PROVE-HORSE-KEEPALIVE-DEFECT.md` for the analysis these support.
 powershell -File scripts\bench-monitor.ps1     # CPU / RAM / handle sampling
 powershell -File scripts\bench-resources.ps1   # per-process resource table
 ```
+
+---
+
+## 4. HTTP/2 vs HTTP/1.1 (h2load) — `bench-h2.bat` / `bench-h2.sh`
+
+The nghttp2 provider speaks **HTTP/2**; everyone else speaks **HTTP/1.1**. That is
+not a detail to normalise away — it decides what "efficient" means. So nghttp2 is
+kept out of the bombardier ladder (an HTTP/1.1 driver) and gets its own harness
+built on **`h2load`**, which speaks *both* protocols. Using one load generator for
+both holds client-side cost constant, so only the server protocol varies — the whole
+point (see `plans/bench-plan-all-providers.md`).
+
+```bat
+scripts\bench-h2.bat                REM S1 + S4, n=200000, all providers
+scripts\bench-h2.bat 200000 s1      REM S1 only
+scripts\bench-h2.bat 200000 s4      REM S4 only
+```
+```bash
+scripts/bench-h2.sh                 # Linux: CrossSocket, mORMot, nghttp2 (no Indy/ICS)
+WORKERS=8 scripts/bench-h2.sh       # pin the nghttp2 dispatch pool for a published run
+```
+
+Needs the new **`HorseBenchNghttp2`** server (`samples\bench\Servers\Nghttp2\`,
+h2c on 9041 / 9051; Delphi port of the Lazarus `.lpr`) and the libnghttp2 runtime
+(`nghttp2.dll` on PATH / `libnghttp2-14`). Drives nghttp2 natively and the HTTP/1.1
+servers with `--h1`.
+
+| Scenario | Load | Decides |
+|---|---|---|
+| **S1** Floor | `-c 10 -m 1` (h2 and h1 alike) | Per-request cost at one request in flight. **HTTP/2 is *expected* to lose** — framing / HPACK / per-stream state. Protocol cost, not a defect |
+| **S4** Multiplexing | h2 `-c 10 -m 100`; h1 `-c 1000` | **Same 1 000 requests in flight**, different transport shapes. The scenario HTTP/2 exists for |
+
+> **Never collapse the output to one winner.** Read it per scenario — the report is
+> a winner *per workload class*. A trivial-route req/s ranking measures the wrong
+> thing. Full `h2load` output per cell lands in `bench-h2-result.txt`.
 
 ---
 

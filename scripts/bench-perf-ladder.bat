@@ -28,6 +28,11 @@ REM    Horse+CrossSocket bare / +headers / +cors   (9002 / 9012)
 REM    Horse+mORMot      bare / +headers / +cors   (9003 / 9013)
 REM    Horse+mORMot      bare / +headers (async)   (THttpAsyncServer via --async)
 REM    Horse+mORMot      bare / +headers (httpapi) (http.sys via --httpapi; see urlacl note)
+REM    Horse+ICS         bare / +headers / +cors   (9009 / 9019; Windows-only, ICS V9.x)
+REM    raw-ics           bare / +headers           (HorseBenchRawICS, 9010)
+REM    Horse+http.sys    bare / +headers / +cors   (9045 / 9055; Windows-only, kernel-mode)
+REM      NOTE: http.sys binds 127.0.0.1 and needs a URL ACL per port - run elevated OR once:
+REM        netsh http add urlacl url=http://127.0.0.1:9045/ user=Everyone   (and :9055)
 REM
 REM  Output: a table (console + bench-perf-ladder-result.txt) with, per tier,
 REM  the averaged Reqs/sec plus the last run's 2xx / 5xx / others and the full
@@ -106,6 +111,7 @@ set SERVERS_DIR=
 if exist "%~dp0HorseBenchIndy.exe"                                          set SERVERS_DIR=%~dp0
 if "!SERVERS_DIR!"=="" if exist "%~dp0..\samples\bench\Win64\Release\HorseBenchIndy.exe" set SERVERS_DIR=%~dp0..\samples\bench\Win64\Release
 if "!SERVERS_DIR!"=="" if exist "%~dp0..\Win64\Release\HorseBenchIndy.exe"   set SERVERS_DIR=%~dp0..\Win64\Release
+if "!SERVERS_DIR!"=="" if exist "%~dp0..\..\bin\Win64\Release\HorseBenchIndy.exe" set SERVERS_DIR=%~dp0..\..\bin\Win64\Release
 if "!SERVERS_DIR!"=="" (
     echo ERROR: HorseBench servers not found near this script.
     exit /b 1
@@ -157,6 +163,20 @@ REM mORMot http.sys backend (THttpApiServer) -- needs admin OR urlacl for :9003 
 REM   netsh http add urlacl url=http://+:9003/ user=Everyone  (and :9013)
 call :CELL HorseBenchMormot.exe          9003 "--httpapi --maxconn %MAXCONN%"                               "Horse+mORMot bare (httpapi)"
 call :CELL HorseBenchMormot.exe          9013 "--httpapi --headers-only --maxconn %MAXCONN%"               "Horse+mORMot +headers (httpapi)"
+REM ICS provider (Windows-only, ICS V9.x). HTTP/1.1; worker-pool + PostMessage
+REM marshal-back -- no WebBroker/Indy connection cap, so no --maxconn/--listenqueue.
+call :CELL HorseBenchICS.exe             9009 ""                                                           "Horse+ICS bare"
+call :CELL HorseBenchICS.exe             9019 "--headers-only"                                             "Horse+ICS +headers"
+call :CELL HorseBenchICS.exe             9019 "--cors"                                                     "Horse+ICS +cors"
+call :CELL HorseBenchRawICS.exe          9010 ""                                                           "raw-ics bare"
+call :CELL HorseBenchRawICS.exe          9010 "--headers"                                                  "raw-ics +headers"
+
+REM http.sys provider (Windows-only, kernel-mode). HTTP/1.1. Binds 127.0.0.1; needs a
+REM URL ACL per port (see note above) or run elevated. No --maxconn/--listenqueue analog.
+call :CELL HorseBenchHttpSys.exe         9045 ""                                                           "Horse+http.sys bare"
+call :CELL HorseBenchHttpSys.exe         9055 "--headers-only"                                             "Horse+http.sys +headers"
+call :CELL HorseBenchHttpSys.exe         9055 "--cors"                                                     "Horse+http.sys +cors"
+
 
 echo.
 echo ================================================================================
@@ -219,7 +239,7 @@ REM ============================================================================
     set _P95=n/a
     set _P99=n/a
 
-    for %%E in (HorseBenchIndy.exe HorseBenchCrossSocket.exe HorseBenchMormot.exe HorseBenchRawIndy.exe HorseBenchRawCrossSocket.exe HorseBenchRawMormot.exe) do (
+    for %%E in (HorseBenchIndy.exe HorseBenchCrossSocket.exe HorseBenchMormot.exe HorseBenchRawIndy.exe HorseBenchRawCrossSocket.exe HorseBenchRawMormot.exe HorseBenchICS.exe HorseBenchRawICS.exe HorseBenchHttpSys.exe) do (
         taskkill /F /IM %%E >nul 2>&1
     )
     timeout /t 1 /nobreak >nul
@@ -247,6 +267,8 @@ REM ============================================================================
     REM point the operator straight at the fix instead of a bare "noListen".
     echo !_ARGS! | findstr /I "httpapi" >nul 2>&1
     if not errorlevel 1 echo        NOTE: http.sys needs a URL ACL. Run this script elevated, or once: netsh http add urlacl url=http://+:!_PORT!/ user=%USERDOMAIN%\%USERNAME%  (see bench-perf-ladder-windows.md section 3)
+    echo !_EXE! | findstr /I "HttpSys" >nul 2>&1
+    if not errorlevel 1 echo        NOTE: http.sys needs a URL ACL. Run elevated, or once: netsh http add urlacl url=http://127.0.0.1:!_PORT!/ user=%USERDOMAIN%\%USERNAME%
     goto :eof
     :LUP
 

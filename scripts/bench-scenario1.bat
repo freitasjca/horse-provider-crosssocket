@@ -13,6 +13,7 @@ set SERVERS_DIR=
 if exist "%~dp0HorseBenchIndy.exe"                                                        set SERVERS_DIR=%~dp0
 if "!SERVERS_DIR!"=="" if exist "%~dp0..\samples\bench\Win64\Release\HorseBenchIndy.exe"  set SERVERS_DIR=%~dp0..\samples\bench\Win64\Release
 if "!SERVERS_DIR!"=="" if exist "%~dp0..\Win64\Release\HorseBenchIndy.exe"                set SERVERS_DIR=%~dp0..\Win64\Release
+if "!SERVERS_DIR!"=="" if exist "%~dp0..\..\bin\Win64\Release\HorseBenchIndy.exe" set SERVERS_DIR=%~dp0..\..\bin\Win64\Release
 if "!SERVERS_DIR!"=="" (
     echo [ERROR] Bench server binaries not found. Looked in:
     echo           %~dp0
@@ -43,7 +44,7 @@ echo ===========================================================================
 REM -- Ensure all 8 server ports are listening ------------------------------------
 echo.
 echo Killing any running bench servers for a clean state...
-for %%E in (HorseBenchIndy.exe HorseBenchCrossSocket.exe HorseBenchMormot.exe HorseBenchRawCrossSocket.exe HorseBenchRawMormot.exe) do (
+for %%E in (HorseBenchIndy.exe HorseBenchCrossSocket.exe HorseBenchMormot.exe HorseBenchRawCrossSocket.exe HorseBenchRawMormot.exe HorseBenchICS.exe HorseBenchRawICS.exe HorseBenchHttpSys.exe) do (
     taskkill /F /IM %%E >/dev/null 2>&1
 )
 timeout /t 1 /nobreak >nul
@@ -56,39 +57,65 @@ call :CHECK_PORT 9005 HorseBenchRawMormot.exe
 call :CHECK_PORT 9011 HorseBenchIndy.exe --middleware
 call :CHECK_PORT 9012 HorseBenchCrossSocket.exe --middleware
 call :CHECK_PORT 9013 HorseBenchMormot.exe --middleware
+call :CHECK_PORT 9009 HorseBenchICS.exe
+call :CHECK_PORT 9019 HorseBenchICS.exe --middleware
+call :CHECK_PORT 9010 HorseBenchRawICS.exe
+call :CHECK_PORT 9045 HorseBenchHttpSys.exe
+call :CHECK_PORT 9055 HorseBenchHttpSys.exe --middleware
 
 REM -- Benchmark runs -------------------------------------------------------------
 echo.
-echo -- [1/8] Horse + Indy  (bare)  port 9001 ------------------------------------
+echo -- [1/13] Horse + Indy  (bare)  port 9001 ------------------------------------
 "%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9001%ROUTE%
 
 echo.
-echo -- [2/8] Horse + CrossSocket  (bare)  port 9002 -----------------------------
+echo -- [2/13] Horse + CrossSocket  (bare)  port 9002 -----------------------------
 "%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9002%ROUTE%
 
 echo.
-echo -- [3/8] Horse + mORMot  (bare)  port 9003 ----------------------------------
+echo -- [3/13] Horse + mORMot  (bare)  port 9003 ----------------------------------
 "%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9003%ROUTE%
 
 echo.
-echo -- [4/8] Raw CrossSocket  (no Horse)  port 9004 -----------------------------
+echo -- [4/13] Raw CrossSocket  (no Horse)  port 9004 -----------------------------
 "%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9004%ROUTE%
 
 echo.
-echo -- [5/8] Raw mORMot  (no Horse)  port 9005 ----------------------------------
+echo -- [5/13] Raw mORMot  (no Horse)  port 9005 ----------------------------------
 "%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9005%ROUTE%
 
 echo.
-echo -- [6/8] Horse + Indy  (middleware)  port 9011 ------------------------------
+echo -- [6/13] Horse + Indy  (middleware)  port 9011 ------------------------------
 "%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9011%ROUTE%
 
 echo.
-echo -- [7/8] Horse + CrossSocket  (middleware)  port 9012 -----------------------
+echo -- [7/13] Horse + CrossSocket  (middleware)  port 9012 -----------------------
 "%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9012%ROUTE%
 
 echo.
-echo -- [8/8] Horse + mORMot  (middleware)  port 9013 ----------------------------
+echo -- [8/13] Horse + mORMot  (middleware)  port 9013 ----------------------------
 "%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9013%ROUTE%
+
+echo.
+echo -- [9/13] Horse + ICS  (bare)  port 9009 ------------------------------------
+"%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9009%ROUTE%
+
+echo.
+echo -- [10/13] Horse + ICS  (middleware)  port 9019 ----------------------------
+"%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9019%ROUTE%
+
+echo.
+echo -- [11/13] Raw ICS  (no Horse)  port 9010 ----------------------------------
+"%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9010%ROUTE%
+
+echo.
+echo -- [12/13] Horse + http.sys  (bare)  port 9045 ---------------------------
+"%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9045%ROUTE%
+
+echo.
+echo -- [13/13] Horse + http.sys  (middleware)  port 9055 ---------------------
+"%BOMB%" -c %CONCURRENCY% -n %REQUESTS% %OPTS% %BASE_URL%:9055%ROUTE%
+
 
 echo.
 echo ================================================================================

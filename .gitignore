@@ -111,3 +111,11 @@ samples/bench/bench-results-linux-*.md
 
 # Delphi IDE editor session state (cursor positions, open views)
 *.dsv
+
+# benchmark run outputs and IDE artifacts
+scripts/bench-h2-result.txt
+scripts/bench-perf-ladder-*.txt
+tls13-run.txt
+tests/bin/
+samples/tests/temp/
+*.otares
