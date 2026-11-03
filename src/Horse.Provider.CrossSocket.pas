@@ -298,6 +298,35 @@ begin
 end;
 
 // ── ListenWithConfig ─────────────────────────────────────────────────────────
+// ── [FIX-CS-ONERROR-1] default OnError handler ───────────────────────────────
+// Plain unit-level procedure — matches THorseOnError (a plain `procedure`, not
+// `procedure of object`; a class method here would be E2009). Registered by
+// ListenWithConfig only when the app set no OnError. Reproduces the pre-Horse-
+// b146c17 ExecutePipeline behaviour for an escaped middleware/onRequest
+// exception: count it (WorkerPool.ReportError, task index 0 = request-path) and
+// return a generic 500 with no message leak (SEC-31). The router only routes
+// GENERIC exceptions here — EHorseException / EHorseCallbackInterrupted are
+// handled before the OnError branch — but the guard is kept, defensively.
+procedure ProviderDefaultOnError(const ARequest: THorseRequest;
+  const AResponse: THorseResponse; const AException: Exception);
+var
+  LPool: THorseWorkerPool;
+begin
+  if (AException is EHorseException) or (AException is EHorseCallbackInterrupted) then
+    Exit;
+
+  LPool := THorseWorkerPool.Instance;
+  if Assigned(LPool) then
+    LPool.ReportError(AException, 0, 'OnError (escaped middleware/onRequest)');
+
+  if Assigned(AResponse) then
+  begin
+    AResponse.Status(THTTPStatus.InternalServerError);
+    AResponse.ContentType('application/json; charset=utf-8');
+    AResponse.Send('{"error":"Internal Server Error"}');
+  end;
+end;
+
 class procedure THorseProviderCrossSocket.ListenWithConfig(
   const APort:   Integer;
   const AConfig: THorseCrossSocketConfig
@@ -313,6 +342,15 @@ begin
   // Runtime (not initialization) so it wins last over the merge's default
   // WebBroker factory registered in Horse.Response's initialization.
   RegisterCrossSocketStreamWriter;
+
+  // [FIX-CS-ONERROR-1] Horse b146c17 made the router handle an escaped
+  // middleware/onRequest exception via THorse.OnError (else a message-leaking
+  // 500), so it no longer reaches ExecutePipeline's catch. Register a DEFAULT
+  // OnError — only when the app set none — that still counts (ReportError) and
+  // returns a generic 500 with no leak. OnError SETS (not appends): restart is
+  // idempotent and an app-registered handler is preserved.
+  if not THorse.HasOnError then
+    THorse.OnError({$IFDEF FPC}@{$ENDIF}ProviderDefaultOnError);
 
   // [FIX-CS-STOP-REENTRANT-1] Re-arm the stop guard for this listen cycle so a
   // restart (Listen after a previous Stop) can be stopped again.
