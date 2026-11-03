@@ -34,6 +34,7 @@ set SERVERS_DIR=
 if exist "%~dp0HorseBenchCrossSocket.exe"                                          set SERVERS_DIR=%~dp0
 if "!SERVERS_DIR!"=="" if exist "%~dp0..\samples\bench\Win64\Release\HorseBenchCrossSocket.exe" set SERVERS_DIR=%~dp0..\samples\bench\Win64\Release
 if "!SERVERS_DIR!"=="" if exist "%~dp0..\Win64\Release\HorseBenchCrossSocket.exe"   set SERVERS_DIR=%~dp0..\Win64\Release
+if "!SERVERS_DIR!"=="" if exist "%~dp0..\..\bin\Win64\Release\HorseBenchCrossSocket.exe" set SERVERS_DIR=%~dp0..\..\bin\Win64\Release
 if "!SERVERS_DIR!"=="" (
     echo ERROR: HorseBench server binaries not found near this script.
     echo        Build them first ^(scripts\build.bat or the IDE^).

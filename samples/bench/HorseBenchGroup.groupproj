@@ -33,6 +33,21 @@
         <Projects Include="Servers\RawIndy\HorseBenchRawIndy.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="Servers\ICS\HorseBenchICS.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\RawICS\HorseBenchRawICS.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\Nghttp2\HorseBenchNghttp2.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\HttpSys\HorseBenchHttpSys.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Servers\Epoll\HorseBenchEpoll.dproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -131,14 +146,59 @@
     <Target Name="HorseBenchRawIndy:Make">
         <MSBuild Projects="Servers\RawIndy\HorseBenchRawIndy.dproj" Targets="Make"/>
     </Target>
+    <Target Name="HorseBenchICS">
+        <MSBuild Projects="Servers\ICS\HorseBenchICS.dproj"/>
+    </Target>
+    <Target Name="HorseBenchICS:Clean">
+        <MSBuild Projects="Servers\ICS\HorseBenchICS.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchICS:Make">
+        <MSBuild Projects="Servers\ICS\HorseBenchICS.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchRawICS">
+        <MSBuild Projects="Servers\RawICS\HorseBenchRawICS.dproj"/>
+    </Target>
+    <Target Name="HorseBenchRawICS:Clean">
+        <MSBuild Projects="Servers\RawICS\HorseBenchRawICS.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchRawICS:Make">
+        <MSBuild Projects="Servers\RawICS\HorseBenchRawICS.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchNghttp2">
+        <MSBuild Projects="Servers\Nghttp2\HorseBenchNghttp2.dproj"/>
+    </Target>
+    <Target Name="HorseBenchNghttp2:Clean">
+        <MSBuild Projects="Servers\Nghttp2\HorseBenchNghttp2.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchNghttp2:Make">
+        <MSBuild Projects="Servers\Nghttp2\HorseBenchNghttp2.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchHttpSys">
+        <MSBuild Projects="Servers\HttpSys\HorseBenchHttpSys.dproj"/>
+    </Target>
+    <Target Name="HorseBenchHttpSys:Clean">
+        <MSBuild Projects="Servers\HttpSys\HorseBenchHttpSys.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchHttpSys:Make">
+        <MSBuild Projects="Servers\HttpSys\HorseBenchHttpSys.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="HorseBenchEpoll">
+        <MSBuild Projects="Servers\Epoll\HorseBenchEpoll.dproj"/>
+    </Target>
+    <Target Name="HorseBenchEpoll:Clean">
+        <MSBuild Projects="Servers\Epoll\HorseBenchEpoll.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="HorseBenchEpoll:Make">
+        <MSBuild Projects="Servers\Epoll\HorseBenchEpoll.dproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="HorseBenchClient;HorseBenchCrossSocket;HorseBenchIndy;HorseBenchMormot;HorseBenchRawCrossSocket;HorseBenchRawMormot;HorseBenchIndy_diag;HorseBenchCrossSocket_diag;HorseBenchMormot_diag;HorseBenchRawIndy"/>
+        <CallTarget Targets="HorseBenchClient;HorseBenchCrossSocket;HorseBenchIndy;HorseBenchMormot;HorseBenchRawCrossSocket;HorseBenchRawMormot;HorseBenchIndy_diag;HorseBenchCrossSocket_diag;HorseBenchMormot_diag;HorseBenchRawIndy;HorseBenchICS;HorseBenchRawICS;HorseBenchNghttp2;HorseBenchHttpSys;HorseBenchEpoll"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="HorseBenchClient:Clean;HorseBenchCrossSocket:Clean;HorseBenchIndy:Clean;HorseBenchMormot:Clean;HorseBenchRawCrossSocket:Clean;HorseBenchRawMormot:Clean;HorseBenchIndy_diag:Clean;HorseBenchCrossSocket_diag:Clean;HorseBenchMormot_diag:Clean;HorseBenchRawIndy:Clean"/>
+        <CallTarget Targets="HorseBenchClient:Clean;HorseBenchCrossSocket:Clean;HorseBenchIndy:Clean;HorseBenchMormot:Clean;HorseBenchRawCrossSocket:Clean;HorseBenchRawMormot:Clean;HorseBenchIndy_diag:Clean;HorseBenchCrossSocket_diag:Clean;HorseBenchMormot_diag:Clean;HorseBenchRawIndy:Clean;HorseBenchICS:Clean;HorseBenchRawICS:Clean;HorseBenchNghttp2:Clean;HorseBenchHttpSys:Clean;HorseBenchEpoll:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="HorseBenchClient:Make;HorseBenchCrossSocket:Make;HorseBenchIndy:Make;HorseBenchMormot:Make;HorseBenchRawCrossSocket:Make;HorseBenchRawMormot:Make;HorseBenchIndy_diag:Make;HorseBenchCrossSocket_diag:Make;HorseBenchMormot_diag:Make;HorseBenchRawIndy:Make"/>
+        <CallTarget Targets="HorseBenchClient:Make;HorseBenchCrossSocket:Make;HorseBenchIndy:Make;HorseBenchMormot:Make;HorseBenchRawCrossSocket:Make;HorseBenchRawMormot:Make;HorseBenchIndy_diag:Make;HorseBenchCrossSocket_diag:Make;HorseBenchMormot_diag:Make;HorseBenchRawIndy:Make;HorseBenchICS:Make;HorseBenchRawICS:Make;HorseBenchNghttp2:Make;HorseBenchHttpSys:Make;HorseBenchEpoll:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

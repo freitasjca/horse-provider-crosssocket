@@ -7,6 +7,7 @@ set SERVERS_DIR=
 if exist "%~dp0HorseBenchClient.exe"                                                        set SERVERS_DIR=%~dp0
 if "!SERVERS_DIR!"=="" if exist "%~dp0..\samples\bench\Win64\Release\HorseBenchClient.exe"  set SERVERS_DIR=%~dp0..\samples\bench\Win64\Release
 if "!SERVERS_DIR!"=="" if exist "%~dp0..\Win64\Release\HorseBenchClient.exe"                set SERVERS_DIR=%~dp0..\Win64\Release
+if "!SERVERS_DIR!"=="" if exist "%~dp0..\..\bin\Win64\Release\HorseBenchClient.exe" set SERVERS_DIR=%~dp0..\..\bin\Win64\Release
 if "!SERVERS_DIR!"=="" (
     echo [ERROR] Bench binaries not found. Looked in:
     echo           %~dp0
@@ -20,12 +21,12 @@ echo [info]  Binaries: !SERVERS_DIR!
 REM -- Kill any running bench servers for a clean, deterministic state -----------
 echo.
 echo Killing any running bench servers...
-for %%E in (HorseBenchIndy.exe HorseBenchCrossSocket.exe HorseBenchMormot.exe HorseBenchRawCrossSocket.exe HorseBenchRawMormot.exe) do (
+for %%E in (HorseBenchIndy.exe HorseBenchCrossSocket.exe HorseBenchMormot.exe HorseBenchRawCrossSocket.exe HorseBenchRawMormot.exe HorseBenchICS.exe HorseBenchRawICS.exe HorseBenchHttpSys.exe) do (
     taskkill /F /IM %%E >nul 2>&1
 )
 timeout /t 1 /nobreak >nul
 
-REM -- Launch all 8 servers this test needs --------------------------------------
+REM -- Launch all 13 servers this test needs -------------------------------------
 echo Launching servers...
 REM Bare mode (6 windows or background starts)
 call :CHECK_PORT 9001 HorseBenchIndy.exe
@@ -37,10 +38,15 @@ REM Middleware mode (Horse providers only)
 call :CHECK_PORT 9011 HorseBenchIndy.exe --middleware
 call :CHECK_PORT 9012 HorseBenchCrossSocket.exe --middleware
 call :CHECK_PORT 9013 HorseBenchMormot.exe --middleware
+call :CHECK_PORT 9009 HorseBenchICS.exe
+call :CHECK_PORT 9019 HorseBenchICS.exe --middleware
+call :CHECK_PORT 9010 HorseBenchRawICS.exe
+call :CHECK_PORT 9045 HorseBenchHttpSys.exe
+call :CHECK_PORT 9055 HorseBenchHttpSys.exe --middleware
 
 
-REM Verify all 8 ports are listening
-powershell "Get-NetTCPConnection -State Listen | Where-Object {$_.LocalPort -in 9001,9002,9003,9004,9005,9011,9012,9013} | Select LocalPort,OwningProcess | Sort LocalPort"
+REM Verify all 13 ports are listening
+powershell "Get-NetTCPConnection -State Listen | Where-Object {$_.LocalPort -in 9001,9002,9003,9004,9005,9009,9010,9011,9012,9013,9019,9045,9055} | Select LocalPort,OwningProcess | Sort LocalPort"
 
 REM Run
 "%SERVERS_DIR%\HorseBenchClient.exe"

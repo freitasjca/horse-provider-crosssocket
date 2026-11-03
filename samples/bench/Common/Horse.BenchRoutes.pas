@@ -66,7 +66,9 @@ const
     See the plan's S1-vs-S4 split before drawing a conclusion from it. }
   BENCH_PORT_NGHTTP2_BARE     = 9041;   // Horse + nghttp2 (h2c)
   BENCH_PORT_RAW_NGHTTP2      = 9042;   // TNghttp2Server directly, no Horse
-  BENCH_PORT_EPOLL_BARE       = 9043;   // Horse + built-in epoll provider
+  BENCH_PORT_EPOLL_BARE       = 9043;   // Horse + built-in epoll provider (Linux)
+  // 9044 reserved for Horse + built-in IOCP provider (Windows) when added.
+  BENCH_PORT_HTTPSYS_BARE     = 9045;   // Horse + built-in http.sys provider (Windows; needs a URL ACL)
 
   // TLS / HTTPS variants. The TLS-capable self-hosted providers (CrossSocket,
   // mORMot, ICS) re-listen on bare_port + BENCH_PORT_TLS_OFFSET when started with

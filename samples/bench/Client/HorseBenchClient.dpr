@@ -3,10 +3,10 @@
 (*
   Horse Performance Benchmark Client
   ====================================
-  Drives all six bench server endpoints (3 providers × 2 modes) through five
-  scenarios and prints a Markdown comparison table.
+  Drives all fourteen bench server endpoints (5 Horse providers × 2 modes + 4
+  raw transports, incl. ICS and HTTP.sys) through five scenarios, Markdown table.
 
-  Prerequisites: all six server binaries must be listening before running this.
+  Prerequisites: all fourteen server binaries must be listening before running this.
 
     HorseBenchIndy.exe                          → port 9001
     HorseBenchIndy.exe --middleware             → port 9011
@@ -14,9 +14,14 @@
     HorseBenchCrossSocket.exe --middleware      → port 9012
     HorseBenchMormot.exe                        → port 9003
     HorseBenchMormot.exe --middleware           → port 9013
+    HorseBenchICS.exe                           → port 9009
+    HorseBenchICS.exe --middleware              → port 9019
+    HorseBenchHttpSys.exe                       → port 9045  (needs a URL ACL)
+    HorseBenchHttpSys.exe --middleware          → port 9055
     HorseBenchRawCrossSocket.exe                → port 9004
     HorseBenchRawMormot.exe                     → port 9005
     HorseBenchRawIndy.exe                       → port 9006
+    HorseBenchRawICS.exe                        → port 9010
 
   Scenarios:
     1  GET  /ping   c=10    n=50 000   baseline, low concurrency
@@ -25,7 +30,8 @@
     4  POST /echo   c=100   n=100 000  body round-trip
     5  GET  /alloc  c=100   n=100 000  allocation + serialisation
 
-  Total: 30 measurement runs (5 scenarios × 3 providers × 2 modes).
+  Total: up to 70 measurement runs (5 scenarios × (5 Horse providers × 2 modes
+  + 4 raw transports)). A provider whose server is not running reports all-errors.
 
   Each run is preceded by a 2 000-request warmup at c=20 to prime the
   provider's thread pool and CrossSocket's context pool.
@@ -108,7 +114,7 @@ type
 // ── Provider and scenario definitions ─────────────────────────────────────────
 
 const
-  PROVIDER_COUNT  = 8;
+  PROVIDER_COUNT  = 9;
   SCENARIO_COUNT  = 5;
 
   // MwPort = 0 means this provider has no middleware variant — the middleware
@@ -124,6 +130,8 @@ const
                              MwPort:   BENCH_PORT_MORMOT_BARE      + BENCH_PORT_MW_OFFSET),
     (Name: 'ICS';            BarePort: BENCH_PORT_ICS_BARE;
                              MwPort:   BENCH_PORT_ICS_BARE         + BENCH_PORT_MW_OFFSET),
+    (Name: 'HTTP.sys';       BarePort: BENCH_PORT_HTTPSYS_BARE;
+                             MwPort:   BENCH_PORT_HTTPSYS_BARE     + BENCH_PORT_MW_OFFSET),
     (Name: 'Raw-CrossSocket';BarePort: BENCH_PORT_RAW_CROSSSOCKET;
                              MwPort:   0),
     (Name: 'Raw-mORMot';     BarePort: BENCH_PORT_RAW_MORMOT;

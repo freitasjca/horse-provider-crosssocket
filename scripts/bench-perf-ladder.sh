@@ -81,16 +81,13 @@ LISTENQ="${5:-$def_listenq}"
 WARMUP_N=$(( CONCURRENCY * 10 )); (( WARMUP_N < 2000 )) && WARMUP_N=2000
 
 RESULTS="${SERVERS_DIR}/bench-perf-ladder-c${CONCURRENCY}-n${REQUESTS}-${COMPILER}.txt"
-TMP_OUT="$(mktemp)"
-trap 'rm -f "$TMP_OUT"; kill_all' EXIT
-
 # All known server binary names across both compilers.
 # pkill silently ignores names that don't match any running process.
 # Delphi and Lazarus builds share the same names; kill_all covers both.
 SERVER_NAMES=(
   HorseBenchIndy HorseBenchCrossSocket HorseBenchMormot
   HorseBenchRawIndy HorseBenchRawCrossSocket HorseBenchRawMormot
-  HorseBenchFPCHttp HorseBenchRawFPCHttp
+  HorseBenchFPCHttp HorseBenchRawFPCHttp HorseBenchEpoll
   HorseBenchFPCHttp_diag HorseBenchCrossSocket_diag HorseBenchMormot_diag
 )
 
@@ -105,7 +102,8 @@ case "$COMPILER" in
   delphi|both)
     [[ -x "${SERVERS_DIR}/HorseBenchIndy" ]] || \
       { echo "ERROR: Delphi server binaries not found in ${SERVERS_DIR}"; \
-        echo "       Need Linux ELF builds without .exe (run build.bat on Windows first)"; exit 1; } ;;
+        echo "       Need Delphi-Linux64 ELF builds (no .exe): build them from the IDE via PAServer."; \
+        echo "       For the FPC/Epoll path instead, build Servers/Lazarus and run: $(basename "$0") lazarus"; exit 1; } ;;
 esac
 case "$COMPILER" in
   lazarus|both)
@@ -131,6 +129,12 @@ kill_all() {
   for s in "${SERVER_NAMES[@]}"; do pkill -9 -x "$s" 2>/dev/null || true; done   # SIGKILL stragglers
   sleep 0.3
 }
+
+# Temp capture + EXIT trap — defined AFTER kill_all so a prereq-check 'exit 1'
+# above does not fire the trap into a not-yet-defined function (was:
+# "kill_all: command not found" on the binaries-missing path).
+TMP_OUT="$(mktemp)"
+trap 'rm -f "$TMP_OUT"; kill_all' EXIT
 
 wait_for_port() {   # $1=port  -> 0 if listening within ~15s
   local port="$1" i=0
@@ -243,6 +247,10 @@ delphi)
   # mORMot async backend (THttpAsyncServer) — A/B vs the thread-pool rows above
   delphi_cell HorseBenchMormot         9003 "--async --maxconn ${MAXCONN}"                            "Horse+mORMot bare (async)"
   delphi_cell HorseBenchMormot         9013 "--async --headers-only --maxconn ${MAXCONN}"            "Horse+mORMot +headers (async)"
+  # Horse + built-in epoll provider (Linux, SO_REUSEPORT) - Delphi-Linux64 build via PAServer.
+  # Linux64-only project (Win64 is a compile-time error); supports --middleware like the FPC build.
+  delphi_cell HorseBenchEpoll          9043 ""                                                       "Horse+Epoll bare"
+  delphi_cell HorseBenchEpoll          9053 "--middleware"                                           "Horse+Epoll +middleware"
   # NOTE: the mORMot --httpapi (http.sys) backend is Windows-only — it has no rows here.
   #       Use bench-perf-ladder.bat on Windows for the http.sys A/B (raw + Horse).
   ;;
@@ -273,6 +281,10 @@ lazarus)
   # No --maxconn: fphttpserver has no module-pool cap analogous to WebBroker.
   lazarus_cell HorseBenchFPCHttp        9007 "--listenqueue ${LISTENQ}"                               "Horse+FPC-HTTP bare"
   lazarus_cell HorseBenchFPCHttp        9017 "--headers-only --listenqueue ${LISTENQ}"                "Horse+FPC-HTTP +headers"
+  # Horse + built-in epoll provider (Linux, SO_REUSEPORT, edge-triggered). HTTP/1.1.
+  # The epoll bench server supports --middleware only (RequestGuard + SecurityHeaders).
+  lazarus_cell HorseBenchEpoll          9043 ""                                                       "Horse+Epoll bare (FPC)"
+  lazarus_cell HorseBenchEpoll          9053 "--middleware"                                           "Horse+Epoll +middleware (FPC)"
   ;;
 
 # --------------------------------------------------------------------------
@@ -325,6 +337,10 @@ both)
   # Lazarus-only: FPC default provider (fphttpserver, thread-per-connection).
   lazarus_cell HorseBenchFPCHttp        9007 "--listenqueue ${LISTENQ}"                               "Horse+FPC-HTTP bare"
   lazarus_cell HorseBenchFPCHttp        9017 "--headers-only --listenqueue ${LISTENQ}"                "Horse+FPC-HTTP +headers"
+  # Horse + built-in epoll provider (Linux, SO_REUSEPORT, edge-triggered). HTTP/1.1.
+  # The epoll bench server supports --middleware only (RequestGuard + SecurityHeaders).
+  lazarus_cell HorseBenchEpoll          9043 ""                                                       "Horse+Epoll bare (FPC)"
+  lazarus_cell HorseBenchEpoll          9053 "--middleware"                                           "Horse+Epoll +middleware (FPC)"
   ;;
 
 esac
