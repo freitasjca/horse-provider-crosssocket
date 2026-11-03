@@ -80,11 +80,11 @@
   THttpHeader = class(TBaseParams) (Net.CrossHttpParams.pas — confirmed):
     Inherits all TBaseParams members:
       property Count: Integer                        (total header entries)
-      property Items[AIndex: Integer]: TNameValue    (integer-indexed access)
+      property Items[AIndex: Integer]: TParamEntry    (integer-indexed access)
       property Params[const AName: string]: string   (string default indexer)
-      function GetEnumerator: TEnumerator            (for..in yields TNameValue)
+      function GetEnumerator: TEnumerator            (for..in yields TParamEntry)
       procedure Clear
-    TNameValue = record Name, Value: string end
+    TParamEntry = record Name, Value: string end
 
   THttpUrlParams = class(TBaseParams) — same enumerator as THttpHeader.
   TRequestCookies = class(TBaseParams) — same enumerator as THttpHeader.
@@ -394,9 +394,9 @@ end;
 // ── [SEC-13] ──────────────────────────────────────────────────────────────────
 // THttpHeader inherits TBaseParams (confirmed — Net.CrossHttpParams.pas).
 // TBaseParams exposes:
-//   Count: Integer           — number of entries (O(1) via TList<TNameValue>.Count)
-//   GetEnumerator: TEnumerator — for..in yields TNameValue records
-//   TNameValue = record Name, Value: string end
+//   Count: Integer           — number of entries (O(1) via TList<TParamEntry>.Count)
+//   GetEnumerator: TEnumerator — for..in yields TParamEntry records
+//   TParamEntry = record Name, Value: string end
 //
 // All client-supplied headers are forwarded to Horse, subject to:
 //   [SEC-13-a] Total count cap  (MAX_HEADER_COUNT)     — checked first, O(1)
@@ -411,7 +411,7 @@ class function TRequestBridge.ParseHeaders(
   out   AReason:   string
 ): Boolean;
 var
-  H: TNameValue;
+  H: TParamEntry;
 begin
   Result := True;
 
@@ -448,7 +448,7 @@ class procedure TRequestBridge.PopulateQuery(
   const ACrossReq: ICrossHttpRequest;
         AHorseReq: THorseRequest);
 var
-  NV: TNameValue;
+  NV: TParamEntry;
 begin
   for NV in ACrossReq.Query do
   begin
@@ -467,7 +467,7 @@ class procedure TRequestBridge.PopulateCookies(
   const ACrossReq: ICrossHttpRequest;
         AHorseReq: THorseRequest);
 var
-  NV: TNameValue;
+  NV: TParamEntry;
 begin
   for NV in ACrossReq.Cookies do
   begin
@@ -554,7 +554,7 @@ var
   UrlParams: THttpUrlParams;
   MultiPart: THttpMultiPartFormData;
   Field:     TFormField;
-  NameVal:   TNameValue;
+  NameVal:   TParamEntry;
 begin
   case ACrossReq.BodyType of
     btUrlEncoded:

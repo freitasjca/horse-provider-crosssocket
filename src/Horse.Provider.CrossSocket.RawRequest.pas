@@ -208,7 +208,7 @@ end;
 
 procedure TCrossSocketRawRequest.PopulateHeaders(ADest: TStrings);
 var
-  NV: TNameValue;
+  NV: TParamEntry;
 begin
   { Consumer (THorseCoreParamHeader.GetHeadersList) sets ADest.NameValueSeparator
     before calling — ':' on Delphi, '=' on FPC — so honour it here. }
@@ -218,7 +218,7 @@ end;
 
 procedure TCrossSocketRawRequest.PopulateQueryFields(ADest: TStrings);
 var
-  NV: TNameValue;
+  NV: TParamEntry;
 begin
   for NV in FCrossReq.Query do
     ADest.Add(NV.Name + '=' + NV.Value);
@@ -226,7 +226,7 @@ end;
 
 procedure TCrossSocketRawRequest.PopulateContentFields(ADest: TStrings);
 var
-  NV: TNameValue;
+  NV: TParamEntry;
 begin
   if (FCrossReq.BodyType = btUrlEncoded) and (FCrossReq.Body is THttpUrlParams) then
     for NV in (FCrossReq.Body as THttpUrlParams) do
@@ -235,7 +235,7 @@ end;
 
 procedure TCrossSocketRawRequest.PopulateCookieFields(ADest: TStrings);
 var
-  NV: TNameValue;
+  NV: TParamEntry;
 begin
   for NV in FCrossReq.Cookies do
     ADest.Add(NV.Name + '=' + NV.Value);
