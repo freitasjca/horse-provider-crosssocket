@@ -115,6 +115,8 @@ samples/bench/bench-results-linux-*.md
 # benchmark run outputs and IDE artifacts
 scripts/bench-h2-result.txt
 scripts/bench-perf-ladder-*.txt
+scripts/bench-tail-result.txt
+scripts/bench-tail-*.bin
 tls13-run.txt
 tests/bin/
 samples/tests/temp/
