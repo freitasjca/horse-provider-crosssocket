@@ -9,9 +9,18 @@ unit Horse.BenchRoutes;
     HorseBenchCrossSocket, HorseBenchFPCHttp                 (Lazarus)
 
   Routes:
-    GET  /ping   — minimal routing overhead; no body
-    POST /echo   — body read + write (pool / shadow-field hot path)
-    GET  /alloc  — allocates and sends a 1 KB string (allocation path)
+    GET  /ping     — minimal routing overhead; no body
+    POST /echo     — body read + write (pool / shadow-field hot path)
+    GET  /alloc    — allocates and sends a 1 KB string (allocation path)
+    GET  /slow/:ms — blocking handler, sleeps :ms ms (bench scenario S5 —
+                     exposes each provider's dispatch model under a blocking
+                     handler: pooled / thread-per-conn keeps serving, a single
+                     inline event loop serialises)
+    GET  /mixed    — realistic mix (bench scenario S6): ~90% fast like /ping,
+                     ~1-in-10 blocks like /slow. A shared atomic counter picks
+                     the slow ones, so h2load hits ONE URL and the server makes
+                     the distribution. Shows whether one slow handler stalls the
+                     fast ones behind it (inline) or not (pool / thread-per-conn)
 
   Dual-compiler: compiles on both Delphi (dcc64) and FPC (fpc).
   No provider-specific units are referenced here.
@@ -77,6 +86,9 @@ const
   BENCH_PORT_TLS_OFFSET       = 30;
 
   ALLOC_BODY_SIZE = 1024;             // bytes returned by GET /alloc
+  SLOW_MAX_MS     = 60000;            // GET /slow/:ms clamp — never park a worker for minutes
+  MIXED_SLOW_MS   = 50;               // GET /mixed — the slow slice blocks this long
+  MIXED_SLOW_EVERY = 10;              // GET /mixed — every Nth request is the slow one (1-in-10 = 10%)
 
 procedure RegisterBenchRoutes;
 
@@ -86,11 +98,21 @@ uses
 {$IF DEFINED(FPC)}
   SysUtils,
   Classes,
+  SyncObjs,
 {$ELSE}
   System.SysUtils,
   System.Classes,
+  System.SyncObjs,
 {$ENDIF}
   Horse;
+
+var
+  // Request counter for GET /mixed — incremented atomically so the 1-in-10 slow
+  // pick is thread-safe on CrossSocket's arbitrary callback threads (Random is
+  // NOT thread-safe: it races on the global RandSeed). A global here is fine for
+  // a bench route — a Multi-Instance collision only shuffles which requests are
+  // slow, it changes no result. Globals are zero-initialised, so no `= 0` needed.
+  GMixedCounter: Integer;
 
 // Route handlers are written as plain unit-scope procedures so the unit
 // compiles on FPC without HORSE_FPC_FUNCTIONREFERENCES (anonymous procedures
@@ -124,6 +146,49 @@ begin
   Res.Send(StringOfChar('X', ALLOC_BODY_SIZE));
 end;
 
+procedure BenchSlow(Req: THorseRequest; Res: THorseResponse);
+var
+  LMs: Integer;
+begin
+  // Blocking-handler probe (bench scenario S5): sleep the requested number of
+  // milliseconds, then respond. A provider that dispatches to a worker pool or
+  // a thread per connection keeps serving the other in-flight requests; a
+  // single event loop that runs the handler inline serialises them all — this
+  // route is where that difference is measurable, /ping is not.
+  //   TThread.Sleep (NOT plain Sleep) resolves on both Delphi (System.Classes)
+  //   and FPC (Classes) — both already in uses. StrToIntDef never raises on a
+  //   non-numeric :ms, so a bad path yields 0 ms, not a 500.
+  LMs := StrToIntDef(Req.Params['ms'], 0);
+  if LMs < 0 then
+    LMs := 0;
+  if LMs > SLOW_MAX_MS then
+    LMs := SLOW_MAX_MS;
+  if LMs > 0 then
+    TThread.Sleep(LMs);
+  Res.ContentType('text/plain; charset=utf-8');
+  Res.Send('slept ' + IntToStr(LMs) + 'ms');
+end;
+
+procedure BenchMixed(Req: THorseRequest; Res: THorseResponse);
+var
+  LN: Integer;
+begin
+  // Mixed realistic workload (bench scenario S6): ~90% of requests respond
+  // immediately like /ping; every MIXED_SLOW_EVERY-th (1-in-10) blocks
+  // MIXED_SLOW_MS like /slow. TInterlocked.Increment makes the pick thread-safe
+  // across the arbitrary callback threads (same primitive Pool.pas [SEC-10]
+  // uses); TThread.Sleep is dual-compile (Delphi System.Classes / FPC Classes).
+  LN := TInterlocked.Increment(GMixedCounter);
+  Res.ContentType('text/plain; charset=utf-8');
+  if (LN mod MIXED_SLOW_EVERY) = 0 then
+  begin
+    TThread.Sleep(MIXED_SLOW_MS);
+    Res.Send('slow');
+  end
+  else
+    Res.Send('fast');
+end;
+
 procedure RegisterBenchRoutes;
 begin
   // ── GET /ping — pure routing overhead, fixed 4-byte string ──────────────
@@ -132,6 +197,10 @@ begin
   THorse.Post('/echo', BenchEcho);
   // ── GET /alloc — 1 KB allocation + serialisation ───────────────────────
   THorse.Get('/alloc', BenchAlloc);
+  // ── GET /slow/:ms — blocking handler (S5 dispatch-model probe) ──────────
+  THorse.Get('/slow/:ms', BenchSlow);
+  // ── GET /mixed — 90% fast / 10% slow realistic mix (S6) ─────────────────
+  THorse.Get('/mixed', BenchMixed);
 end;
 
 end.

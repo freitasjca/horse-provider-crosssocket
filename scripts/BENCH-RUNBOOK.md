@@ -203,8 +203,12 @@ scripts\bench-h2.bat 200000 s1      REM S1 only
 scripts\bench-h2.bat 200000 s4      REM S4 only
 ```
 ```bash
-scripts/bench-h2.sh                 # Linux: CrossSocket, mORMot, nghttp2 (no Indy/ICS)
+scripts/bench-h2.sh                 # Linux: S1+S4, CrossSocket, mORMot, nghttp2 (no Indy/ICS)
 WORKERS=8 scripts/bench-h2.sh       # pin the nghttp2 dispatch pool for a published run
+scripts/bench-h2.sh 200000 s3       # S3 connection-scale sweep (opt-in, long)
+scripts/bench-h2.sh 200000 s5       # S5 blocking-handler probe (opt-in; rebuild servers first)
+scripts/bench-h2.sh 200000 s6       # S6 realistic 90/10 mix (opt-in; rebuild servers first)
+scripts/bench-tail.sh               # S7 open-loop tail latency (vegeta; separate script)
 ```
 
 Needs the new **`HorseBenchNghttp2`** server (`samples\bench\Servers\Nghttp2\`,
@@ -215,11 +219,60 @@ servers with `--h1`.
 | Scenario | Load | Decides |
 |---|---|---|
 | **S1** Floor | `-c 10 -m 1` (h2 and h1 alike) | Per-request cost at one request in flight. **HTTP/2 is *expected* to lose** — framing / HPACK / per-stream state. Protocol cost, not a defect |
+| **S3** Conn scale | sweep `-c 10,100,1000,10000` (h2: `-m 1`) | Phase **P3** — where each concurrency model **breaks**. Records req/s **and peak server RSS** per level. Thread-per-conn (FPC-HTTP; Indy on Windows) falls over first, nghttp2 thread-per-conn second |
 | **S4** Multiplexing | h2 `-c 10 -m 100`; h1 `-c 1000` | **Same 1 000 requests in flight**, different transport shapes. The scenario HTTP/2 exists for |
+| **S5** Blocking | `/slow/<ms>`, h1 `-c 100`; h2 `-c 10 -m 10` | Phase **P4** — what a dispatch pool buys. The handler sleeps `<ms>`, so throughput = (handler slots) ÷ (block time): thread-per-conn ≈ `c`, a bounded pool ≈ pool size, a single inline event loop ≈ 1 (serialises → `rc=124`) |
+| **S6** Mixed 90/10 | `/mixed`, h1 `-c 100`; h2 `-c 10 -m 10` | Phase **P4** — S5's question on a realistic load. ~90% fast (like `/ping`), ~1-in-10 blocks (like `/slow`), split made server-side so one URL. Does a slow handler stall the fast ones queued behind it? |
+| **S7** Tail latency | `bench-tail.sh` — **vegeta** open-loop, fixed rate ≈ 80% of S2, keep-alive | Phase **P4** — true P99/Max **without coordinated omission**. Closed-loop h2load understates the tail (a stall lowers the rate instead of showing up); vegeta offers a constant request rate regardless of server response. **Separate script / tool** — h2load's `--rate` paces connections, not requests, so it cannot do this |
 
 > **Never collapse the output to one winner.** Read it per scenario — the report is
 > a winner *per workload class*. A trivial-route req/s ranking measures the wrong
 > thing. Full `h2load` output per cell lands in `bench-h2-result.txt`.
+
+> **Reading S3.** Quote the RSS **slope** across the sweep, not the absolute MB — the
+> baseline cancels, the per-connection cost is the gradient (perf-measurement §1). A
+> cell whose `requests:` line shows `failed`/`errored` > 0, or that logs `h2load rc=124`
+> (`[TIMED OUT]`), is a **failure mode, not a throughput** — report *how* it broke
+> (refused / timed out / OOM), never a blank. `S3` is **opt-in** (`… s3`): it is long
+> and opens 10 000 sockets. Knobs: `S3_CONNS="10 100 1000 10000"`, `CELL_TIMEOUT_S3=180`.
+> Before blaming a provider that fails at c≥1000, check the backend it printed at startup
+> — mORMot's default `mskThreadPool` collapses there; `--async` carries it (that's why the
+> sweep runs mORMot twice). **Windows S3** (Indy / ICS / HTTP.sys / IOCP) is phase **P5**,
+> via `bench-h2.bat`, not wired yet.
+
+> **Reading S5.** Throughput on a blocking route is the provider's **effective concurrency**,
+> not its speed: `req/s × block-time ≈ concurrent handler slots`. FPC-HTTP (thread-per-conn)
+> should post the *highest* S5 throughput — the inverse of its S3/S4 result — because 100
+> connections give it 100 slots; a single inline event loop posts the lowest or times out.
+> **S5 needs the `/slow/:ms` route** (added to `Common/Horse.BenchRoutes.pas`): **rebuild the
+> bench servers first**, or every cell returns `4xx` (route not found). Knobs: `SLOW_MS=50`,
+> `SLOW_N=10000` (S5 ignores the `n` argument — blocking requests are slow), `CELL_TIMEOUT_S5=90`
+> (a cell that times out ran the handler inline — that is the finding, not a number). nghttp2's
+> pool size is `WORKERS` — pin it and read the resolved count the server prints. **Windows S5**
+> (Indy / ICS / HTTP.sys / IOCP) is phase **P5**, via `bench-h2.bat`, not wired yet.
+
+> **Reading S6.** The `/mixed` route makes its own 90/10 split via an atomic counter, so h2load
+> hits one URL — a realistic blend of S1 (fast) and S5 (blocking). Read it against S5: a provider
+> whose S5 was pool-bound shows here whether the *occasional* slow request stalls the fast stream
+> behind it. Same failure semantics — `failed`/`errored` > 0 or `rc=124` is a dispatch stall, not a
+> throughput. **S6 needs the `/mixed` route** (BenchRoutes.pas): **rebuild the bench servers first**
+> or every cell 404s. Knobs: `MIXED_N=50000`, `CELL_TIMEOUT_S6=90` (the 90/10 ratio and 50 ms are
+> compiled into the route). nghttp2 pool = `WORKERS`, as in S5. **Windows S6** is phase **P5**.
+
+> **Reading S7 (`bench-tail.sh`).** This is the ONE scenario h2load cannot do: its `--rate` paces
+> connection creation, not request submission, so it stays coordinated-omission-prone. S7 uses
+> **vegeta** — a constant-rate, keep-alive, coordinated-omission-correcting generator (install:
+> `V=12.12.0; curl -sSL https://github.com/tsenart/vegeta/releases/download/v$V/vegeta_${V}_linux_amd64.tar.gz | tar xz vegeta && sudo mv vegeta /usr/local/bin/`).
+> vegeta speaks HTTP/1.1 only, so CrossSocket / mORMot / FPC-HTTP / Epoll get the real open-loop
+> tail (P50/P90/P99/Max in `vegeta report`), while **nghttp2 (h2c) falls back to closed-loop h2load,
+> LABELLED coordinated-omission-prone and NOT comparable** to the vegeta rows. Each cell offers
+> ≈80% of that provider's S2 (c=100 /ping) throughput — near, but below, saturation — so the tail
+> reflects scheduling jitter, not a queue backing up forever; a tail that still explodes means the
+> provider can't hold 80% of its own closed-loop rate once load is offered on the clock. Knobs:
+> `RATE=<n>` (one common rate for every cell, head-to-head), `DURATION=<Ns>` (default 10s),
+> `WORKERS` (nghttp2 pool). Raw vegeta results are saved as `bench-tail-<provider>.bin`;
+> `vegeta report -type=hdrplot <bin>` (or `-type=json`) gives P99.9 and beyond. Refresh the
+> per-provider rate defaults in the script if the S2 ladder moves. **Windows S7** is phase **P5**.
 
 ---
 
