@@ -56,7 +56,7 @@ uses
   Net.CrossHttpServer,
   Net.CrossSocket.Base,
   Horse.Response,
-  Horse.Provider.RawAdapters,
+  Horse.Provider.CrossSocket.WebResponseAdapter,
   Horse.Provider.CrossSocket.RawResponse;
 
 type
@@ -131,10 +131,16 @@ begin
   FDoneEvent := TEvent.Create(nil, True {manual reset}, False, '');
   FConnected := True;
 
-  { Reach the live ICrossHttpResponse via the adapter chain. }
+  { Reach the live ICrossHttpResponse via the adapter chain.
+    FIX-FPC-IFACE-1: Use a class-to-class downcast (same pointer, no offset
+    adjustment) rather than casting IHorseRawResponse (interface) to
+    TCrossSocketRawResponse (class).  Delphi adjusts interface→class casts
+    automatically; FPC does a raw cast, skipping the vtable offset → AV on
+    .CrossRes.  TCrossSocketWebResponse stores ICrossHttpResponse directly in
+    FCrossRes, so no interface→class conversion is needed at all. }
   LRaw := AResponse.RawWebResponse;
-  if (LRaw <> nil) and (LRaw is TInterfacedWebResponse) then
-    FCrossRes := TCrossSocketRawResponse(TInterfacedWebResponse(LRaw).RawRes).CrossRes;
+  if (LRaw <> nil) and (LRaw is TCrossSocketWebResponse) then
+    FCrossRes := TCrossSocketWebResponse(LRaw).CrossRes;
   if not Assigned(FCrossRes) then
     FConnected := False;
 end;

@@ -1,5 +1,22 @@
 {
 	"hash": "d41d8cd98f00b204e9800998ecf8427e",
 	"updated": "2026-03-09T10:45:40.4843719Z",
-	"installedModules": {}
+	"installedModules": {
+		"github.com/freitasjca/delphi-cross-socket": {
+			"name": "Delphi-Cross-Socket",
+			"version": "v1.0.18",
+			"hash": "8fbbe8e4711d6cbadafc23ab51dc3d2c",
+			"artifacts": {},
+			"failed": false,
+			"changed": false
+		},
+		"github.com/hashload/horse": {
+			"name": "horse",
+			"version": "3.3.16",
+			"hash": "93e06c19c2b74e37ed6fc5c70853dfc4",
+			"artifacts": {},
+			"failed": false,
+			"changed": false
+		}
+	}
 }

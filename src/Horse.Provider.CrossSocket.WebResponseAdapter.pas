@@ -57,8 +57,16 @@ type
     The constructor hides the two-step construction. }
 
   TCrossSocketWebResponse = class(TInterfacedWebResponse)
+  private
+    { FIX-FPC-IFACE-1: store ICrossHttpResponse as a plain field so the stream
+      writer can reach it via a safe class-to-class cast (TCrossSocketWebResponse
+      is a TResponse/TWebResponse subclass — the same pointer, no offset).
+      Avoids casting IHorseRawResponse (interface) back to TCrossSocketRawResponse
+      (class), which Delphi adjusts automatically but FPC does not → AV. }
+    FCrossRes: ICrossHttpResponse;
   public
     constructor Create(const ACrossRes: ICrossHttpResponse); reintroduce;
+    property CrossRes: ICrossHttpResponse read FCrossRes;
   end;
 
 implementation
@@ -66,6 +74,7 @@ implementation
 constructor TCrossSocketWebResponse.Create(const ACrossRes: ICrossHttpResponse);
 begin
   inherited Create(TCrossSocketRawResponse.Create(ACrossRes));
+  FCrossRes := ACrossRes;
 end;
 
 end.
